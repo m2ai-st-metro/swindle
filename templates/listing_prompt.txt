@@ -1,0 +1,36 @@
+Generate a Gumroad product listing for a free developer tool.
+
+Product: {{ title }}
+Repository: {{ repo_url }}
+
+Spec:
+{{ spec_text }}
+
+Source files:
+{{ file_tree }}
+
+Style guidelines:
+- Technical-professional tone, not salesy
+- Developer-focused, assume the reader codes
+- Concise -- respect the reader's time
+- Dark-theme developer aesthetic references
+- Price: FREE
+
+Generate the listing with these exact sections:
+
+## What's Inside
+(List the concrete deliverables -- source code, config files, scripts, etc.)
+
+## The Problem
+(What pain point does this solve? Be specific and technical.)
+
+## How It Works
+(Brief technical architecture. 3-5 bullet points max.)
+
+## Get Started
+(Installation/setup steps. Code blocks.)
+
+---
+Also output a one-line summary (max 140 chars) and 3-5 tags.
+Format the summary line as: SUMMARY: <text>
+Format the tags line as: TAGS: tag1, tag2, tag3

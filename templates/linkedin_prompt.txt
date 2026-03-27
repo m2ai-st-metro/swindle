@@ -1,0 +1,40 @@
+Write a LinkedIn post promoting a free developer tool I just published on Gumroad.
+
+Product: {{ title }}
+Gumroad link: gum.co/{{ repo_name }}
+
+Listing copy:
+{{ listing_text }}
+
+Metadata:
+{{ metadata_json }}
+
+Voice and style rules:
+- First person (I/my), conversational, technical but accessible
+- Write as Matthew Snow -- an engineer who builds developer tools and ships them for free
+- No em dashes, no AI cliches ("game-changer", "revolutionary", "unlock"), no corporate speak
+- Specific tool names, commands, and technical details from the listing
+- 150-300 words total
+
+Structure (follow this exactly):
+
+1. HOOK (1-2 lines)
+   Bold, counterintuitive, earn the "...more" click.
+   Do NOT use hashtags or emojis in the hook.
+
+2. CONTEXT (2-4 lines)
+   Ground it in something real -- a problem you hit, a pattern you noticed.
+
+3. WALKTHROUGH (60% of the post)
+   Step by step. Use -> for steps, |> for sub-points. Show the tool in action.
+   Reference actual commands, file names, or features from the listing.
+
+4. INSIGHT (2-4 lines)
+   Zoom out to a transferable principle. What does this teach beyond the tool itself?
+
+5. CTA (2 lines after ---)
+   Line 1: "Repost if this is useful to your network"
+   Line 2: "Follow me for more free developer tools"
+
+Output ONLY the post text. No markdown headers, no labels like "HOOK:" or "CONTEXT:".
+Just the raw post ready to paste into LinkedIn.

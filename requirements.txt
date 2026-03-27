@@ -1,0 +1,6 @@
+click
+requests
+jinja2
+pydantic
+pytest
+python-dotenv
