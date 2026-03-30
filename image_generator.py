@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 BANANA_MAKER = "/home/apexaipc/.claude/skills/banana-maker/generate_image.py"
+BANANA_MAKER_PYTHON = "/home/apexaipc/.claude/skills/banana-maker/venv/bin/python3"
 
 
 def _run_banana_maker(prompt: str, output_path: str, aspect_ratio: str) -> bool:
@@ -13,8 +14,9 @@ def _run_banana_maker(prompt: str, output_path: str, aspect_ratio: str) -> bool:
     Returns:
         True if image was generated successfully.
     """
+    python = BANANA_MAKER_PYTHON if Path(BANANA_MAKER_PYTHON).exists() else sys.executable
     cmd = [
-        sys.executable,
+        python,
         BANANA_MAKER,
         prompt,
         "--model", "flash",
@@ -32,7 +34,15 @@ def _run_banana_maker(prompt: str, output_path: str, aspect_ratio: str) -> bool:
         if result.returncode != 0:
             print(f"banana-maker error: {result.stderr}", file=sys.stderr)
             return False
-        return Path(output_path).exists()
+        # banana-maker may save as .jpg regardless of requested extension
+        out = Path(output_path)
+        if out.exists():
+            return True
+        jpg_alt = out.with_suffix(".jpg")
+        if jpg_alt.exists():
+            jpg_alt.rename(out)
+            return True
+        return False
     except subprocess.TimeoutExpired:
         print("banana-maker timed out after 120s", file=sys.stderr)
         return False
