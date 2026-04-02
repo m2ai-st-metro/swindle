@@ -1,4 +1,4 @@
-"""Listing copy generator using DeepInfra Nemotron-3."""
+"""Listing copy generator using DeepInfra Mistral Small."""
 
 import json
 import os
@@ -17,7 +17,7 @@ PROJECT_DIR = Path(__file__).parent
 TEMPLATE_DIR = PROJECT_DIR / "templates"
 
 DEEPINFRA_API_URL = "https://api.deepinfra.com/v1/openai/chat/completions"
-MODEL = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B"
+MODEL = "mistralai/Mistral-Small-3.2-24B-Instruct-2506"
 
 
 def _get_file_tree(project_dir: str, max_depth: int = 3) -> str:

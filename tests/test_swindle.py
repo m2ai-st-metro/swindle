@@ -238,7 +238,7 @@ class TestListingGenerator:
         # Verify correct model in request
         call_kwargs = mock_post.call_args
         body = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
-        assert body["model"] == "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B"
+        assert body["model"] == "mistralai/Mistral-Small-3.2-24B-Instruct-2506"
 
 
 # --- Image Generator Tests ---

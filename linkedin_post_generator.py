@@ -1,4 +1,4 @@
-"""LinkedIn post generator using DeepInfra Nemotron-3."""
+"""LinkedIn post generator using DeepInfra Mistral Small."""
 
 import json
 import os
@@ -15,11 +15,11 @@ TEMPLATE_DIR = PROJECT_DIR / "templates"
 STAGING_DIR = PROJECT_DIR / "staging"
 
 DEEPINFRA_API_URL = "https://api.deepinfra.com/v1/openai/chat/completions"
-MODEL = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B"
+MODEL = "mistralai/Mistral-Small-3.2-24B-Instruct-2506"
 
 
 def _call_llm(prompt: str) -> str:
-    """Call DeepInfra Nemotron-3 for LinkedIn post generation."""
+    """Call DeepInfra Mistral Small for LinkedIn post generation."""
     api_key = os.environ.get("DEEPINFRA_API_KEY")
     if not api_key:
         raise RuntimeError("DEEPINFRA_API_KEY not found in ~/.env.shared")

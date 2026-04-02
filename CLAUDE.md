@@ -43,6 +43,6 @@ pytest tests/ -v
 1. **HIL only** -- Swindle prepares, Matthew publishes manually to Gumroad
 2. **No Gumroad API** -- POST endpoint returns 404; output is file-based staging packages
 3. **Subprocess isolation** -- banana-maker called as subprocess, not imported
-4. **DeepInfra Nemotron-3** -- all LLM calls use `nvidia/NVIDIA-Nemotron-3-Super-120B-A12B`
+4. **DeepInfra Mistral Small** -- listing + LinkedIn LLM calls use `mistralai/Mistral-Small-3.2-24B-Instruct-2506` (swapped from Nemotron-3 on 2026-04-02 for better instruction following)
 5. **Price always $0** -- free developer tools
 6. **Visual style** -- clean, modern, dark-theme developer aesthetic (not hand-drawn/pixel art)
