@@ -67,9 +67,11 @@ def _call_llm(prompt: str) -> str:
                 {
                     "role": "system",
                     "content": (
-                        "You are a technical copywriter for developer tools. "
-                        "Write concise, professional product listings. "
-                        "No marketing fluff. Assume the reader is a developer."
+                        "You are a technical copywriter for developer tools sold on Gumroad. "
+                        "Write persuasive but honest product listings. Lead with concrete benefits "
+                        "and value propositions. Use specific claims ('saves 2 hours/week') not "
+                        "empty hype ('revolutionary'). The reader is a developer -- earn trust "
+                        "through specificity, not superlatives."
                     ),
                 },
                 {"role": "user", "content": prompt},

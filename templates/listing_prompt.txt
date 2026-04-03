@@ -10,22 +10,30 @@ Source files:
 {{ file_tree }}
 
 Style guidelines:
-- Technical-professional tone, not salesy
-- Developer-focused, assume the reader codes
+- Lead with a punchy hook -- one sentence that tells a developer why they should care
+- Use benefit-focused copy: what time/effort/pain does this save? Be specific ("cuts branch cleanup from 30 min to 2 min") not vague ("improves your workflow")
+- Technical-professional tone -- persuasive but honest. Developers trust specificity over hype.
+- NEVER use empty superlatives: "revolutionary", "game-changing", "cutting-edge", "unleash", "supercharge", "next-generation"
+- DO use concrete value propositions, comparisons to alternatives, and honest scope ("does X well, doesn't try to do Y")
 - Concise -- respect the reader's time
-- Dark-theme developer aesthetic references
 - Price: FREE
 
 Generate the listing with these exact sections:
+
+## Hook
+(One punchy sentence -- the reason someone clicks. Focus on the pain it solves or time it saves.)
 
 ## What's Inside
 (List the concrete deliverables -- source code, config files, scripts, etc.)
 
 ## The Problem
-(What pain point does this solve? Be specific and technical.)
+(What pain point does this solve? Be specific. Quantify the cost of NOT having this tool if possible.)
 
 ## How It Works
 (Brief technical architecture. 3-5 bullet points max.)
+
+## Why This One?
+(1-2 sentences on what makes this different from alternatives or rolling your own. Be honest.)
 
 ## Get Started
 (Installation/setup steps. Code blocks.)
