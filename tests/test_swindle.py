@@ -253,7 +253,7 @@ class TestListingGenerator:
         # Verify correct model in request
         call_kwargs = mock_post.call_args
         body = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
-        assert body["model"] == "mistralai/Mistral-Small-3.2-24B-Instruct-2506"
+        assert body["model"] == "Qwen/Qwen2.5-72B-Instruct"
 
 
 # --- Image Generator Tests ---
@@ -374,7 +374,7 @@ class TestValidator:
                 "title": "Test Tool",
                 "price": 0,
                 "tags": ["cli", "python", "mcp"],
-                "summary": "Tool for devs who want X, saves 2 hours/week.",
+                "summary": "Tool for devs who want X, clean and focused.",
                 "repo_url": "https://github.com/x/y",
                 "generated_at": "now",
             }),
@@ -465,6 +465,126 @@ class TestValidator:
             )
             failures = validate_listing(sd)
             assert any("Dear" in f for f in failures)
+
+    # --- Fabricated numeric claim detection ---
+
+    @staticmethod
+    def _write_meta(sd: Path, *, spec_path: str | None, summary: str = "Neutral summary for devs.") -> None:
+        meta = {
+            "title": "Test Tool",
+            "price": 0,
+            "tags": ["cli", "python", "mcp"],
+            "summary": summary,
+            "repo_url": "https://github.com/x/y",
+            "generated_at": "now",
+        }
+        if spec_path is not None:
+            meta["spec_path"] = spec_path
+        (sd / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
+
+    def test_flags_unsourced_numeric_claim(self):
+        """listing.md claims 'save 2+ hours per week' but spec doesn't mention it."""
+        with tempfile.TemporaryDirectory() as td:
+            sd = Path(td)
+            self._good_staging(sd)
+            spec = sd / "spec.md"
+            spec.write_text(
+                "This tool does things. It helps developers. "
+                "No time savings mentioned anywhere.\n",
+                encoding="utf-8",
+            )
+            (sd / "listing.md").write_text(
+                "This tool helps developers. "
+                "It will save 2+ hours per week on repetitive tasks.\n"
+                + "Extra padding text. " * 10,
+                encoding="utf-8",
+            )
+            self._write_meta(sd, spec_path=str(spec))
+            failures = validate_listing(sd)
+            assert any(
+                "unsourced numeric claim" in f and "listing.md" in f
+                for f in failures
+            ), f"expected unsourced claim failure, got: {failures}"
+
+    def test_allows_sourced_numeric_claim(self):
+        """Spec file explicitly contains the same phrase -- should pass."""
+        with tempfile.TemporaryDirectory() as td:
+            sd = Path(td)
+            self._good_staging(sd)
+            spec = sd / "spec.md"
+            spec.write_text(
+                "## Benefits\n\nThis tool will save 2 hours per week for the "
+                "average developer based on pilot measurements.\n",
+                encoding="utf-8",
+            )
+            (sd / "listing.md").write_text(
+                "This tool helps developers. "
+                "It will save 2 hours per week on repetitive tasks.\n"
+                + "Extra padding text. " * 10,
+                encoding="utf-8",
+            )
+            self._write_meta(sd, spec_path=str(spec))
+            failures = validate_listing(sd)
+            assert not any(
+                "unsourced numeric claim" in f for f in failures
+            ), f"expected no unsourced claim failures, got: {failures}"
+
+    def test_flags_claim_when_no_spec_path_in_metadata(self):
+        """metadata.json missing spec_path; listing has a numeric claim."""
+        with tempfile.TemporaryDirectory() as td:
+            sd = Path(td)
+            self._good_staging(sd)
+            (sd / "listing.md").write_text(
+                "Our tool will reduce bugs by 80% in production code.\n"
+                + "Padding sentence. " * 10,
+                encoding="utf-8",
+            )
+            self._write_meta(sd, spec_path=None)
+            failures = validate_listing(sd)
+            assert any(
+                "missing spec_path" in f for f in failures
+            ), f"expected missing spec_path failure, got: {failures}"
+
+    def test_passes_listing_with_no_numeric_claims(self):
+        """A neutral listing with no outcome claims should pass the new check."""
+        with tempfile.TemporaryDirectory() as td:
+            sd = Path(td)
+            self._good_staging(sd)
+            (sd / "listing.md").write_text(
+                "This tool helps developers manage their workflow. "
+                "It integrates with common CLI environments and provides "
+                "a clean interface for routine tasks.\n"
+                + "More detail text. " * 10,
+                encoding="utf-8",
+            )
+            self._write_meta(sd, spec_path=None, summary="Clean helper for dev workflow.")
+            failures = validate_listing(sd)
+            # No numeric-claim-related failures
+            assert not any(
+                "unsourced numeric claim" in f or "missing spec_path" in f
+                for f in failures
+            ), f"expected no claim failures, got: {failures}"
+
+    def test_harmless_numbers_not_flagged(self):
+        """Version numbers, test counts, UI element counts must NOT match patterns."""
+        with tempfile.TemporaryDirectory() as td:
+            sd = Path(td)
+            self._good_staging(sd)
+            (sd / "listing.md").write_text(
+                "Requires Python 3.11+ and Node 18+. "
+                "Ships with 52 tests passing. "
+                "The UI has an 8-tab form and 3 dashboards.\n"
+                + "More content here. " * 10,
+                encoding="utf-8",
+            )
+            # spec_path missing on purpose -- if a harmless number matched, we'd
+            # see a "missing spec_path" failure. We don't want that.
+            self._write_meta(sd, spec_path=None, summary="Dev helper, Python 3.11+.")
+            failures = validate_listing(sd)
+            assert not any(
+                "unsourced numeric claim" in f or "missing spec_path" in f
+                for f in failures
+            ), f"expected no claim failures on harmless numbers, got: {failures}"
 
 
 class TestPublisherPlan:

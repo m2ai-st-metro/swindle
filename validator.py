@@ -47,6 +47,39 @@ REASONING_ARTIFACTS = (
 
 STUB_TAG_SET = frozenset({"tag1", "tag2", "tag3"})
 
+# Regex patterns that catch outcome/benefit claims with numeric payloads.
+# Each match is treated as a claim that MUST be grounded in the source spec.
+# Patterns are deliberately scoped to "outcome verbs" or benefit framings so
+# neutral references to version numbers, test counts, file counts, etc. don't
+# trigger the guard. `re.IGNORECASE` is applied in the check function.
+NUMERIC_CLAIM_PATTERNS = (
+    # "save 2+ hours per week", "saves 30 minutes/day", "cut 5 days per month"
+    r"\b(?:save[sd]?|saving|cut(?:s|ting)?|reduce[sd]?|reducing|shave[sd]?)\s+"
+    r"\d+\+?\s*(?:hours?|hrs?|minutes?|mins?|days?|weeks?|months?)"
+    r"(?:\s*(?:per|/|a)\s*(?:week|day|month|hour))?",
+
+    # "reduce bugs by 80%", "cut costs by 40 percent", "save 30%"
+    r"\b(?:reduce[sd]?|reducing|cut(?:s|ting)?|save[sd]?|saving)\s+"
+    r"(?:\w+\s+){0,3}by\s+\d+\+?\s*(?:%|percent)",
+    r"\b(?:reduce[sd]?|reducing|cut(?:s|ting)?|save[sd]?|saving)\s+\d+\+?\s*(?:%|percent)\b",
+
+    # "boost/improve/increase X by 50%"
+    r"\b(?:boost(?:s|ed|ing)?|improve[sd]?|improving|increase[sd]?|increasing|"
+    r"accelerate[sd]?)\s+(?:\w+\s+){0,3}by\s+\d+\+?\s*(?:%|percent)",
+
+    # "N% faster", "30% less", "50% more" (percent-qualified comparatives)
+    r"\b\d+\+?\s*(?:%|percent)\s+(?:faster|slower|less|more|better|cheaper|"
+    r"higher|lower|fewer|greater)\b",
+
+    # "10x faster", "3× more", "5x less" (multiplier comparatives)
+    r"\b\d+\+?\s*[x×]\s+(?:faster|slower|less|more|better|cheaper|higher|"
+    r"lower|fewer|greater)\b",
+
+    # "10 times faster", "3 times more" (verbal multiplier comparatives)
+    r"\b\d+\+?\s+times\s+(?:faster|slower|less|more|better|cheaper|higher|"
+    r"lower|fewer|greater)\b",
+)
+
 
 def validate_listing(staging_dir: Path) -> list[str]:
     """Validate a staging directory. Returns a list of failure messages.
@@ -69,6 +102,7 @@ def validate_listing(staging_dir: Path) -> list[str]:
     _check_button_text(sd, failures)
     _check_receipt_message(sd, failures)
     _check_images(sd, failures)
+    _check_no_fabricated_claims(sd, failures)
 
     return failures
 
@@ -204,3 +238,98 @@ def _check_images(sd: Path, failures: list[str]) -> None:
             failures.append(f"{name} missing")
         elif path.stat().st_size == 0:
             failures.append(f"{name} is 0 bytes")
+
+
+def _normalize_claim(text: str) -> str:
+    """Lowercase, collapse whitespace, strip surrounding punctuation.
+
+    Used for provenance matching — we check whether a normalized claim
+    appears as a substring of normalized spec text.
+    """
+    cleaned = re.sub(r"\s+", " ", text).strip().lower()
+    # Strip wrapping punctuation but preserve internal chars like '+', '%', etc.
+    cleaned = cleaned.strip(".,;:!?\"'()[]{}")
+    return cleaned
+
+
+def _check_no_fabricated_claims(sd: Path, failures: list[str]) -> None:
+    """Flag unsourced numeric outcome claims in listing.md and metadata.summary.
+
+    Strict-by-default: if metadata.json has no `spec_path` or the spec file is
+    missing, ANY numeric claim fails validation. Auto-publish requires
+    provenance — we will not let a claim go live without a source.
+    """
+    listing_path = sd / "listing.md"
+    metadata_path = sd / "metadata.json"
+
+    # Collect text surfaces that need screening. Missing files have already
+    # been flagged elsewhere; skip silently here.
+    surfaces: list[tuple[str, str]] = []
+    if listing_path.exists():
+        surfaces.append(("listing.md", listing_path.read_text(encoding="utf-8")))
+
+    metadata: dict = {}
+    if metadata_path.exists():
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            metadata = {}
+        summary_text = metadata.get("summary") or ""
+        if summary_text.strip():
+            surfaces.append(("metadata.summary", summary_text))
+
+    # Find all claim matches across surfaces first. If nothing matches, we can
+    # short-circuit without even touching the spec file.
+    found: list[tuple[str, str]] = []  # (surface_name, matched_text)
+    for surface_name, text in surfaces:
+        for pattern in NUMERIC_CLAIM_PATTERNS:
+            for m in re.finditer(pattern, text, flags=re.IGNORECASE):
+                found.append((surface_name, m.group(0)))
+
+    if not found:
+        return
+
+    # Provenance source: spec_path from metadata.json.
+    spec_path_value = metadata.get("spec_path")
+    spec_text_normalized: str | None = None
+
+    if not spec_path_value:
+        for surface_name, match_text in found:
+            failures.append(
+                f"numeric claim {match_text!r} in {surface_name} cannot be "
+                f"verified: metadata.json missing spec_path"
+            )
+        return
+
+    spec_file = Path(spec_path_value)
+    if not spec_file.exists() or not spec_file.is_file():
+        for surface_name, match_text in found:
+            failures.append(
+                f"numeric claim {match_text!r} in {surface_name} cannot be "
+                f"verified: metadata.json missing spec_path"
+            )
+        return
+
+    try:
+        spec_raw = spec_file.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        for surface_name, match_text in found:
+            failures.append(
+                f"numeric claim {match_text!r} in {surface_name} cannot be "
+                f"verified: metadata.json missing spec_path"
+            )
+        return
+
+    spec_text_normalized = _normalize_claim(spec_raw)
+    # Also keep a whitespace-collapsed lowercase version for substring match
+    # (the stripping in _normalize_claim is for the outer edges only; we want
+    # free substring matching through the body of the spec).
+    spec_body = re.sub(r"\s+", " ", spec_raw).lower()
+
+    for surface_name, match_text in found:
+        needle = _normalize_claim(match_text)
+        if needle and needle in spec_body:
+            continue
+        failures.append(
+            f"unsourced numeric claim in {surface_name}: {match_text!r}"
+        )

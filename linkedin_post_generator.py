@@ -15,7 +15,7 @@ TEMPLATE_DIR = PROJECT_DIR / "templates"
 STAGING_DIR = PROJECT_DIR / "staging"
 
 DEEPINFRA_API_URL = "https://api.deepinfra.com/v1/openai/chat/completions"
-MODEL = "mistralai/Mistral-Small-3.2-24B-Instruct-2506"
+MODEL = "Qwen/Qwen2.5-72B-Instruct"
 
 
 def _call_llm(prompt: str) -> str:

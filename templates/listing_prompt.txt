@@ -2,6 +2,30 @@ Write a Gumroad product description for a free developer tool. The reader is a
 developer scrolling a storefront who has about 10 seconds to decide whether
 this is worth downloading. Win that 10 seconds.
 
+STRICT SOURCING RULES (read before writing anything)
+
+1. Do NOT invent time savings, productivity gains, or percentage improvements.
+   Phrases like "save 2+ hours/week", "cuts setup by 80%", "10x faster" are
+   BANNED unless the exact claim appears in the Spec below. If it's not in
+   the spec, it does not go in the listing.
+2. Do NOT invent benchmark numbers, test counts, user counts, star counts,
+   download counts, uptime percentages, or any other quantified metric. Zero
+   fabricated numbers. If the spec does not state it, omit it.
+3. Do NOT use superlatives ("most", "fastest", "best", "only", "unparalleled",
+   "world-class", "industry-leading") unless the exact superlative is sourced
+   from the spec. Default to neutral descriptive language.
+4. Features and benefits must be derivable from the Spec or Source files
+   content. No extrapolation, no "users typically see...", no "this means
+   you'll be able to..." unless the spec says it directly.
+5. If a claim you want to make is not supported by the spec, OMIT it. Do not
+   soften it, paraphrase it, or hedge it ("may help you...", "could save...").
+   Omission beats invention.
+6. Tone: outcome-oriented but grounded. Describe what the repo DOES and WHO
+   it's for. Do not claim what the buyer WILL ACHIEVE unless that outcome is
+   explicitly promised in the spec.
+
+When in doubt, describe the tool. Do not sell an outcome you cannot source.
+
 Product: {{ title }}
 Repository: {{ repo_url }}
 
@@ -15,33 +39,36 @@ Voice and shape
 
 - Plain speak. Write how you'd describe this to a dev friend at a bar, not
   how you'd describe it in a quarterly report.
-- Lead with the pain or the outcome, not the tool name. First sentence
-  should make the reader think "yeah, I have that problem."
+- Lead with what the tool does or who it's for. First sentence should make
+  the reader recognize the problem space.
 - Short paragraphs. 2-3 sentences each, max. White space is a feature.
 - No headers unless they genuinely help. Aim for at most ONE short bullet
   list if you need to enumerate concrete things you get.
-- Specific over generic. "Cuts branch cleanup from 30 min to 2 min" beats
-  "streamlines your workflow". Numbers over adjectives.
-- No superlatives ever: revolutionary, game-changing, cutting-edge, unleash,
+- Specific over generic, but only when specifics are sourced. "Python 3.11+,
+  no external services" (sourced from spec) beats "streamlines your workflow"
+  (vague). Never fabricate specifics to sound concrete.
+- No hype words: revolutionary, game-changing, cutting-edge, unleash,
   supercharge, next-generation, best-in-class, seamless. Cut them all.
-- Honest about scope. "Does X well, doesn't try to do Y" builds trust.
-- Free. Don't belabor the price — it's free, just move on.
+- Honest about scope. "Does X, does not do Y" builds trust.
+- Free. Don't belabor the price, it's free, just move on.
 - Target length: 180-300 words. Shorter is better than longer.
 
 Shape to follow
 
-1. Opening paragraph (2-3 sentences): the pain, or the outcome. Hook.
-2. One paragraph on what it actually does. Concrete. Specific.
+1. Opening paragraph (2-3 sentences): what the tool is and the problem space
+   it sits in. Hook without hype.
+2. One paragraph on what it actually does. Concrete, derived from the spec.
 3. Optional: a short bullet list (3-5 items) of what you get IF enumerating
-   things adds value. Skip if the paragraph covered it.
-4. One paragraph on how to use it or what to expect. Setup time, the one
-   thing that will trip you up, the thing you wish someone had told you.
+   things adds value. Every bullet must be sourced from the spec or files.
+4. One paragraph on how to use it or what to expect. Setup basics from the
+   spec. Only include friction notes if the spec mentions them.
 5. Close with one sentence pointing to the repo or next step.
 
 After the description, on separate lines:
 
 SUMMARY: <one sentence, max 140 chars, the elevator pitch — this is the
-Gumroad summary field, it shows up in search results, make it count>
+Gumroad summary field, it shows up in search results, make it count.
+Same sourcing rules apply: no invented numbers, no superlatives.>
 TAGS: <3-5 comma-separated tags, lowercase, hyphens-not-spaces>
 
 Do not include headers like "Description:" or "Output:". Do not explain

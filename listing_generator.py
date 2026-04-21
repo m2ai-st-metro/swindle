@@ -17,7 +17,7 @@ PROJECT_DIR = Path(__file__).parent
 TEMPLATE_DIR = PROJECT_DIR / "templates"
 
 DEEPINFRA_API_URL = "https://api.deepinfra.com/v1/openai/chat/completions"
-MODEL = "mistralai/Mistral-Small-3.2-24B-Instruct-2506"
+MODEL = "Qwen/Qwen2.5-72B-Instruct"
 
 
 def _get_file_tree(project_dir: str, max_depth: int = 3) -> str:
@@ -51,16 +51,18 @@ def _read_spec(spec_path: str | None) -> str:
 
 SYSTEM_PROMPT = (
     "You are a copywriter for developer tools sold on Gumroad. Write in plain "
-    "speak — how a dev would describe the tool to a friend, not how marketing "
-    "would describe it. Lead with concrete pain or outcomes. Use specific "
-    "claims ('saves 2 hours/week', 'Python 3.11+, no external services') not "
-    "empty hype ('revolutionary', 'seamless', 'next-generation'). The reader "
-    "is a developer — earn trust through specificity, not superlatives."
+    "speak, how a dev would describe the tool to a friend, not how marketing "
+    "would describe it. Describe what the repo does and who it's for, using "
+    "facts drawn from the provided spec. Do not invent numbers, percentages, "
+    "time savings, benchmark results, or superlatives. If a claim is not in "
+    "the spec, omit it rather than soften or paraphrase it. Avoid hype words "
+    "like 'revolutionary', 'seamless', 'next-generation'. The reader is a "
+    "developer. Earn trust through accuracy and clarity, not exaggeration."
 )
 
 
 def _call_llm(prompt: str, max_tokens: int = 2000, temperature: float = 0.7) -> str:
-    """Call DeepInfra Mistral Small for listing generation."""
+    """Call DeepInfra Qwen 2.5-72B for listing generation."""
     api_key = os.environ.get("DEEPINFRA_API_KEY")
     if not api_key:
         raise RuntimeError("DEEPINFRA_API_KEY not found in ~/.env.shared")
@@ -86,8 +88,18 @@ def _call_llm(prompt: str, max_tokens: int = 2000, temperature: float = 0.7) -> 
     return resp.json()["choices"][0]["message"]["content"]
 
 
-def _parse_metadata(llm_output: str, title: str, repo_url: str) -> dict:
-    """Extract summary and tags from LLM output."""
+def _parse_metadata(
+    llm_output: str,
+    title: str,
+    repo_url: str,
+    spec_path: str | None = None,
+) -> dict:
+    """Extract summary and tags from LLM output.
+
+    `spec_path` is the absolute path to the source spec used to generate this
+    listing. It's written into metadata.json so the validator can check
+    numeric claims for provenance. If not provided, the field is omitted.
+    """
     summary = title
     tags = ["developer-tools"]
 
@@ -101,7 +113,7 @@ def _parse_metadata(llm_output: str, title: str, repo_url: str) -> dict:
     if tags_match:
         tags = [t.strip() for t in tags_match.group(1).split(",")]
 
-    return {
+    metadata: dict = {
         "title": title,
         "price": 0,
         "tags": tags,
@@ -109,6 +121,10 @@ def _parse_metadata(llm_output: str, title: str, repo_url: str) -> dict:
         "repo_url": repo_url,
         "generated_at": datetime.now().isoformat(),
     }
+    if spec_path:
+        # Write absolute path so validator can resolve regardless of CWD.
+        metadata["spec_path"] = str(Path(spec_path).expanduser().resolve())
+    return metadata
 
 
 def _clean_listing(llm_output: str) -> str:
@@ -154,7 +170,7 @@ def generate_listing(
 
     llm_output = _call_llm(prompt)
     listing_md = _clean_listing(llm_output)
-    metadata = _parse_metadata(llm_output, title, repo_url)
+    metadata = _parse_metadata(llm_output, title, repo_url, spec_path=spec_path)
 
     return listing_md, metadata
 
