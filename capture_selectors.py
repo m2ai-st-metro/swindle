@@ -35,6 +35,7 @@ CLI
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -501,10 +502,28 @@ def cli() -> None:
 )
 def run(selectors_path: Path, start_url: str) -> None:
     """Run the full capture loop: ensure files, codegen, parse, apply."""
+    if sys.platform != "win32" and not os.environ.get("DISPLAY"):
+        raise click.ClickException(
+            "No X display available ($DISPLAY is empty). Playwright codegen "
+            "needs a visible browser. Options:\n"
+            "  - Sit at the ProBook's GUI desktop and run this from a "
+            "terminal opened there.\n"
+            "  - SSH with X11 forwarding from a machine running an X server: "
+            "`ssh -Y apexaipc@10.0.0.46` (e.g. VcXsrv on Windows, XQuartz "
+            "on macOS).\n"
+            "  - Port capture_selectors.py to a machine with a real display."
+        )
     click.echo(WALKTHROUGH)
     ensure_sentinel_files()
     click.echo("Launching playwright codegen — close the Inspector when done.\n")
     capture_path = run_codegen(start_url=start_url)
+    if not capture_path.exists() or capture_path.stat().st_size == 0:
+        raise click.ClickException(
+            f"Codegen produced no capture at {capture_path}. Check the "
+            f"codegen output above for the real error (common causes: "
+            f"missing X server, browser launch failure, user killed the "
+            f"Inspector before recording anything)."
+        )
     click.echo(f"\nParsing {capture_path}")
     result = parse_capture(capture_path)
     diffs = apply_captures(result.captures, selectors_path, backup=True)
