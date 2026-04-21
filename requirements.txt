@@ -1,4 +1,5 @@
 click
+markdown
 requests
 jinja2
 pydantic

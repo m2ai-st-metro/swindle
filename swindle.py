@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 import click
+import markdown as md
 
 from db import SwindleDB
 from gumroad_api_client import (
@@ -585,6 +586,24 @@ def approve(repo_name):
         db.close()
 
 
+MARKDOWN_EXTENSIONS = [
+    "extra",     # tables, fenced code, attribute lists, abbreviations, footnotes
+    "sane_lists",  # don't auto-number bullets that start with a digit
+    "nl2br",     # single newlines -> <br>, for prose paragraphs that aren't blank-line separated
+]
+
+
+def _markdown_to_html(text: str) -> str:
+    """Convert markdown listing body to HTML for the Gumroad description field.
+
+    Gumroad's description renderer expects a limited subset of HTML (paragraphs,
+    headings, lists, links, emphasis, code blocks). We don't sanitize here --
+    the input is LLM-generated and already curated; Gumroad server-side will
+    strip anything it doesn't accept.
+    """
+    return md.markdown(text, extensions=MARKDOWN_EXTENSIONS, output_format="html5")
+
+
 def _plan_to_product_plan(
     plan: PublishPlan,
     file_url: Optional[str],
@@ -599,12 +618,14 @@ def _plan_to_product_plan(
             "position": 0,
         })
 
-    # Append the feature bullets under an "Includes" section; Gumroad's
-    # dedicated features list is only writable via the web UI today.
-    description = plan.description_md.rstrip()
+    # Build the full markdown description (body + Includes section), then
+    # render to HTML. Gumroad stores whatever we send verbatim, so the HTML
+    # form is what buyers see; raw markdown renders as literal text.
+    description_md = plan.description_md.rstrip()
     if plan.features:
-        description += "\n\n## Includes\n\n"
-        description += "\n".join(f"- {f}" for f in plan.features)
+        description_md += "\n\n## Includes\n\n"
+        description_md += "\n".join(f"- {f}" for f in plan.features)
+    description = _markdown_to_html(description_md)
 
     return ProductPlan(
         name=plan.title,
@@ -612,7 +633,7 @@ def _plan_to_product_plan(
         price_cents=plan.price_cents,
         tags=plan.tags,
         custom_summary=plan.summary,
-        custom_receipt=plan.receipt_message,
+        custom_receipt=_markdown_to_html(plan.receipt_message) if plan.receipt_message else "",
         files=files,
     )
 
