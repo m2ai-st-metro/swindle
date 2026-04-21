@@ -15,13 +15,7 @@ from click.testing import CliRunner
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from db import SwindleDB
-from capture_selectors import (
-    SENTINELS,
-    apply_captures,
-    locator_expr_to_selector_string,
-    parse_capture,
-)
-from gumroad_publisher import PlanError, PublishPlan, build_plan
+from publish_plan import PlanError, PublishPlan, build_plan
 from image_generator import build_cover_command, build_thumbnail_command
 from listing_generator import (
     _clean_listing,
@@ -707,216 +701,6 @@ class TestPublisherPlan:
             assert plan.thumbnail_path is None
 
 
-class TestGumroadSelectors:
-    """Structural checks on the gumroad_selectors module."""
-
-    def test_all_required_selectors_exported(self):
-        import gumroad_selectors as gs
-        required = [
-            "NEW_PRODUCT_URL", "LOGIN_URL",
-            "TAB_PRODUCT", "TAB_CONTENT", "TAB_CHECKOUT", "TAB_RECEIPT",
-            "DESCRIPTION_EDITOR", "SUMMARY_INPUT", "TAGS_INPUT",
-            "ADD_FEATURE_BUTTON", "FEATURE_INPUTS",
-            "BUTTON_TEXT_INPUT", "RECEIPT_MESSAGE_EDITOR",
-            "SAVE_DRAFT_BUTTON", "PRODUCT_ID_URL_PATTERN",
-        ]
-        for name in required:
-            assert hasattr(gs, name), f"missing selector: {name}"
-            assert getattr(gs, name), f"empty selector: {name}"
-
-    def test_product_id_pattern_matches_typical_url(self):
-        import re
-
-        import gumroad_selectors as gs
-        m = re.search(gs.PRODUCT_ID_URL_PATTERN,
-                      "https://app.gumroad.com/products/abc123XYZ_-/edit")
-        assert m is not None
-        assert m.group(1) == "abc123XYZ_-"
-
-
-class TestCaptureSelectors:
-    """capture_selectors parses codegen output and rewrites gumroad_selectors.py."""
-
-    def test_locator_expr_to_selector_string_mappings(self):
-        cases = [
-            ('get_by_role("textbox", name="Name")', 'role=textbox[name="Name"]'),
-            ('get_by_role("button")', 'role=button'),
-            ('get_by_label("Price")', 'label=Price'),
-            ('get_by_placeholder("Describe")', 'placeholder=Describe'),
-            ('get_by_test_id("submit")', 'data-testid=submit'),
-            ('get_by_text("Save")', 'text=Save'),
-            ('get_by_text("Save", exact=True)', 'text=Save'),
-            ('locator("#product-name")', '#product-name'),
-        ]
-        for expr, expected in cases:
-            assert locator_expr_to_selector_string(expr) == expected, f"failed on {expr}"
-
-    def test_parse_capture_matches_sentinels_and_clicks(self):
-        code = f'''
-from playwright.sync_api import Page
-
-def run(page: Page):
-    page.get_by_text("Digital product").click()
-    page.get_by_label("Name").fill("{SENTINELS['NEW_PRODUCT_NAME']}")
-    page.get_by_label("Summary").fill("{SENTINELS['SUMMARY_INPUT']}")
-    page.get_by_role("button", name="Save as draft").click()
-'''
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-            f.write(code)
-            path = Path(f.name)
-        try:
-            result = parse_capture(path)
-            names = {c.name for c in result.captures}
-            assert "NEW_PRODUCT_NAME" in names
-            assert "SUMMARY_INPUT" in names
-            assert "PRODUCT_TYPE_DIGITAL" in names
-            assert "SAVE_DRAFT_BUTTON" in names
-            # Unmatched reported too
-            assert "DESCRIPTION_EDITOR" in result.unmatched_sentinels
-        finally:
-            path.unlink()
-
-    def test_apply_captures_rewrites_single_line(self):
-        with tempfile.TemporaryDirectory() as td:
-            td = Path(td)
-            mod = td / "gumroad_selectors.py"
-            mod.write_text(
-                'from typing import Final\n'
-                'FOO: Final = "old-css"\n'
-                'BAR: Final = "keep-me"\n',
-                encoding="utf-8",
-            )
-            code = f'''
-def r(page):
-    page.get_by_label("Foo").fill("{SENTINELS['NEW_PRODUCT_NAME']}")
-'''
-            # Temp: map NEW_PRODUCT_NAME capture to FOO by renaming in the copy
-            cap_file = td / "cap.py"
-            cap_file.write_text(code, encoding="utf-8")
-            result = parse_capture(cap_file)
-            # Remap to match our test module
-            result.captures[0].name = "FOO"
-            diffs = apply_captures(result.captures, mod, backup=False)
-            assert "FOO" in diffs
-            content = mod.read_text()
-            assert "FOO: Final = 'label=Foo'" in content
-            assert 'BAR: Final = "keep-me"' in content  # untouched
-
-    def test_apply_captures_rewrites_multiline_parenthesised(self):
-        with tempfile.TemporaryDirectory() as td:
-            td = Path(td)
-            mod = td / "gumroad_selectors.py"
-            mod.write_text(
-                'from typing import Final\n'
-                'SAVE: Final = (\n'
-                '    "button:has-text(\'Save\'), "\n'
-                '    "button:has-text(\'Submit\')"\n'
-                ')\n'
-                'OTHER: Final = "untouched"\n',
-                encoding="utf-8",
-            )
-            code = f'''
-def r(page):
-    page.get_by_role("button", name="Save as draft").click()
-'''
-            cap_file = td / "cap.py"
-            cap_file.write_text(code, encoding="utf-8")
-            result = parse_capture(cap_file)
-            assert any(c.name == "SAVE_DRAFT_BUTTON" for c in result.captures)
-            # Remap for test module key
-            for c in result.captures:
-                if c.name == "SAVE_DRAFT_BUTTON":
-                    c.name = "SAVE"
-            diffs = apply_captures(result.captures, mod, backup=False)
-            content = mod.read_text()
-            # Must be syntactically valid Python
-            import ast
-            ast.parse(content)
-            assert "SAVE: Final = 'role=button[name=\"Save as draft\"]'" in content
-            assert 'OTHER: Final = "untouched"' in content
-
-    def test_apply_captures_skips_raw_fallbacks(self):
-        with tempfile.TemporaryDirectory() as td:
-            td = Path(td)
-            mod = td / "gumroad_selectors.py"
-            original = 'from typing import Final\nFOO: Final = "keep-me"\n'
-            mod.write_text(original, encoding="utf-8")
-            # A capture whose expression we cannot map
-            from capture_selectors import Capture
-            cap = Capture(name="FOO", locator_expr="something_weird(xyz)",
-                          matched_via="fill-sentinel")
-            diffs = apply_captures([cap], mod, backup=False)
-            assert diffs == {}
-            assert mod.read_text() == original
-
-    def test_parse_capture_matches_set_input_files_sentinel(self):
-        """parser matches set_input_files sentinel to upload selector."""
-        code = f'''
-from playwright.sync_api import Page
-
-def run(page: Page):
-    page.get_by_label("Cover image").set_input_files("{SENTINELS['COVER_UPLOAD_INPUT']}")
-    page.locator("input[type='file'].thumb").set_input_files("{SENTINELS['THUMBNAIL_UPLOAD_INPUT']}")
-    page.get_by_role("button", name="Upload files").set_input_files("{SENTINELS['CONTENT_UPLOAD_INPUT']}")
-'''
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-            f.write(code)
-            path = Path(f.name)
-        try:
-            result = parse_capture(path)
-            by_name = {c.name: c for c in result.captures}
-            assert "COVER_UPLOAD_INPUT" in by_name
-            assert "THUMBNAIL_UPLOAD_INPUT" in by_name
-            assert "CONTENT_UPLOAD_INPUT" in by_name
-            assert by_name["COVER_UPLOAD_INPUT"].matched_via == "set_input_files"
-            assert by_name["COVER_UPLOAD_INPUT"].locator_expr == 'get_by_label("Cover image")'
-            assert by_name["THUMBNAIL_UPLOAD_INPUT"].locator_expr == (
-                "locator(\"input[type='file'].thumb\")"
-            )
-            # Upload selectors should NOT show up in unmatched_sentinels
-            assert "COVER_UPLOAD_INPUT" not in result.unmatched_sentinels
-            assert "CONTENT_UPLOAD_INPUT" not in result.unmatched_sentinels
-        finally:
-            path.unlink()
-
-    def test_ensure_sentinel_files_creates_valid_files(self):
-        """ensure_sentinel_files writes the three payloads with valid bytes."""
-        from capture_selectors import ensure_sentinel_files, SENTINELS
-        # Clean any pre-existing sentinels so we test creation
-        for key in ("COVER_UPLOAD_INPUT", "THUMBNAIL_UPLOAD_INPUT", "CONTENT_UPLOAD_INPUT"):
-            p = Path(SENTINELS[key])
-            if p.exists():
-                p.unlink()
-        created = ensure_sentinel_files()
-        assert set(created.keys()) == {
-            "COVER_UPLOAD_INPUT", "THUMBNAIL_UPLOAD_INPUT", "CONTENT_UPLOAD_INPUT"
-        }
-        cover = Path(SENTINELS["COVER_UPLOAD_INPUT"])
-        thumb = Path(SENTINELS["THUMBNAIL_UPLOAD_INPUT"])
-        content = Path(SENTINELS["CONTENT_UPLOAD_INPUT"])
-        assert cover.exists() and thumb.exists() and content.exists()
-        # PNG signature
-        assert cover.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
-        assert thumb.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
-        # Empty zip: EOCD signature at start
-        assert content.read_bytes()[:4] == b"PK\x05\x06"
-        # Verify the zip actually opens
-        import zipfile
-        assert zipfile.is_zipfile(content)
-
-    def test_cli_walkthrough_prints_walkthrough(self):
-        """Click CLI 'walkthrough' subcommand prints the walkthrough string."""
-        from capture_selectors import cli, WALKTHROUGH
-        runner = CliRunner()
-        result = runner.invoke(cli, ["walkthrough"])
-        assert result.exit_code == 0, result.output
-        # Spot-check a handful of anchors from the walkthrough text
-        assert "SELECTOR CAPTURE WALKTHROUGH" in result.output
-        assert "SWINDLE_SENTINEL_COVER.png" in result.output
-        assert "SWINDLE_SENTINEL_CONTENT.zip" in result.output
-        # Full string fidelity
-        assert WALKTHROUGH.strip() in result.output
-
 
 class TestRepoNameExtraction:
     """Test repo name extraction from URLs."""
@@ -1213,11 +997,11 @@ class TestPublishCommand:
                 patch.object(db, "close"),  # Keep in-memory DB alive
             ):
                 result = self.runner.invoke(
-                    self.cli, ["publish", "test-repo", "--gumroad-url", "https://gumroad.com/l/test"]
+                    self.cli, ["mark-published", "test-repo", "--gumroad-url", "https://gumroad.com/l/test"]
                 )
 
             assert result.exit_code == 0
-            assert "Published: test-repo" in result.output
+            assert "Marked published: test-repo" in result.output
 
             listing = db.get_by_name("test-repo")
             assert listing["status"] == "published"
@@ -1241,7 +1025,7 @@ class TestPublishCommand:
                 patch.object(db, "close"),  # Keep in-memory DB alive
             ):
                 result = self.runner.invoke(
-                    self.cli, ["publish", "test-repo", "--gumroad-url", "https://gumroad.com/l/test"]
+                    self.cli, ["mark-published", "test-repo", "--gumroad-url", "https://gumroad.com/l/test"]
                 )
 
             assert result.exit_code == 0
@@ -1266,7 +1050,7 @@ class TestPublishCommand:
                 patch("swindle.STAGING_DIR", tmpdir),
             ):
                 result = self.runner.invoke(
-                    self.cli, ["publish", "test-repo", "--gumroad-url", "https://gumroad.com/l/test"]
+                    self.cli, ["mark-published", "test-repo", "--gumroad-url", "https://gumroad.com/l/test"]
                 )
 
             assert result.exit_code != 0
@@ -1293,7 +1077,7 @@ class TestPublishCommand:
                 patch("swindle.STAGING_DIR", tmpdir),
             ):
                 result = self.runner.invoke(
-                    self.cli, ["publish", "test-repo", "--gumroad-url", "https://gumroad.com/l/test"]
+                    self.cli, ["mark-published", "test-repo", "--gumroad-url", "https://gumroad.com/l/test"]
                 )
 
             assert result.exit_code == 0
@@ -1322,7 +1106,7 @@ class TestPublishCommand:
                 patch("swindle.STAGING_DIR", tmpdir),
             ):
                 result = self.runner.invoke(
-                    self.cli, ["publish", "test-repo", "--gumroad-url", "https://gumroad.com/l/test"]
+                    self.cli, ["mark-published", "test-repo", "--gumroad-url", "https://gumroad.com/l/test"]
                 )
 
             assert result.exit_code == 0
@@ -1336,7 +1120,7 @@ class TestPublishCommand:
 
         with patch("swindle._get_db", return_value=db):
             result = self.runner.invoke(
-                self.cli, ["publish", "nonexistent", "--gumroad-url", "https://gumroad.com/l/x"]
+                self.cli, ["mark-published", "nonexistent", "--gumroad-url", "https://gumroad.com/l/x"]
             )
 
         assert result.exit_code != 0

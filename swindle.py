@@ -10,7 +10,12 @@ from typing import Optional
 import click
 
 from db import SwindleDB
-from gumroad_publisher import GumroadPublisher, PlanError, build_plan
+from gumroad_api_client import (
+    GumroadAPIClient,
+    GumroadAPIError,
+    ProductPlan,
+)
+from publish_plan import PlanError, PublishPlan, build_plan
 from image_generator import generate_cover, generate_thumbnail
 from linkedin_post_generator import generate_linkedin_post
 from listing_generator import (
@@ -20,8 +25,6 @@ from listing_generator import (
     generate_receipt_message,
 )
 from validator import validate_listing
-
-PLAYWRIGHT_PROFILE_DIR = Path(__file__).parent / "data" / "playwright-profile"
 
 PROJECT_DIR = Path(__file__).parent
 STAGING_DIR = PROJECT_DIR / "staging"
@@ -232,150 +235,37 @@ def prepare(repo_url, spec_path, project_dir, title, dry_run):
     click.echo("Review the files, then run: python swindle.py approve " + repo_name)
 
 
-@cli.command("capture-selectors")
-@click.option("--output-file", type=click.Path(), default=None,
-              help="Where codegen writes the captured Python (default: /tmp/swindle_codegen_*.py)")
-@click.option("--apply/--no-apply", default=True,
-              help="After parsing, overwrite gumroad_selectors.py with captured selectors")
-def capture_selectors_cmd(output_file, apply):
-    """Wrap `playwright codegen` to capture real Gumroad selectors.
-
-    Opens the Playwright Inspector. Walk through the new-product flow using
-    the sentinel values printed to the terminal. When you close the
-    Inspector, the captured Python is parsed and the matched selectors are
-    written to gumroad_selectors.py (with a timestamped backup).
-    """
-    from pathlib import Path
-
-    from capture_selectors import (
-        WALKTHROUGH,
-        apply_captures,
-        parse_capture,
-        run_codegen,
-    )
-
-    click.echo(WALKTHROUGH)
-    click.confirm("Ready to launch Playwright Inspector?", default=True, abort=True)
-
-    out_path = Path(output_file) if output_file else None
-    out_path = run_codegen(output_path=out_path)
-    click.echo(f"\nCodegen wrote capture to: {out_path}")
-
-    if not out_path.exists():
-        click.echo("No capture file produced. Aborting.", err=True)
-        sys.exit(1)
-
-    result = parse_capture(out_path)
-    click.echo(f"\nMatched {len(result.captures)} selector(s):")
-    for cap in result.captures:
-        click.echo(f"  {cap.name:30} via {cap.matched_via:16} -> {cap.locator_expr}")
-    if result.unmatched_sentinels:
-        click.echo(f"\n{len(result.unmatched_sentinels)} sentinel(s) not found (field not filled or different value):", err=True)
-        for s in result.unmatched_sentinels:
-            click.echo(f"  {s}", err=True)
-    if result.unmatched_clicks:
-        click.echo(f"\n{len(result.unmatched_clicks)} click target(s) not found:", err=True)
-        for c in result.unmatched_clicks:
-            click.echo(f"  {c}", err=True)
-
-    if not result.captures:
-        click.echo("\nNothing to apply. Exiting.", err=True)
-        sys.exit(1)
-
-    if not apply:
-        click.echo("\n--no-apply given; gumroad_selectors.py NOT modified.")
-        return
-
-    if not click.confirm("\nApply these captures to gumroad_selectors.py?", default=True):
-        click.echo("Skipped. gumroad_selectors.py unchanged.")
-        return
-
-    sel_path = Path(__file__).parent / "gumroad_selectors.py"
-    diffs = apply_captures(result.captures, sel_path, backup=True)
-    click.echo(f"\nRewrote {len(diffs)} selector(s) in {sel_path}")
-    for name, (old, new) in diffs.items():
-        click.echo(f"  {name}")
-        click.echo(f"    old: {old[:80]}")
-        click.echo(f"    new: {new}")
-    click.echo("\nBackup saved alongside gumroad_selectors.py (.bak-<timestamp>).")
 
 
 @cli.command()
 @click.argument("repo_name")
-@click.option("--dry-run", is_flag=True, help="Print plan without opening browser")
-@click.option("--headful/--headless", default=True, help="Show browser (recommended for first runs)")
-@click.option("--first-login", is_flag=True, help="Open browser and pause for manual Gumroad login")
-def push(repo_name, dry_run, headful, first_login):
-    """Publish a staged listing as a Gumroad draft via Playwright."""
+def plan(repo_name):
+    """Show the PublishPlan for a staged listing (no network)."""
     staging_dir = STAGING_DIR / repo_name
     if not staging_dir.is_dir():
         click.echo(f"Staging directory not found: {staging_dir}", err=True)
         sys.exit(1)
 
-    if first_login:
-        click.echo("Opening browser for manual Gumroad login...")
-        click.echo("Log in, dismiss any prompts, then close the browser tab.")
-        from playwright.sync_api import sync_playwright
-        with sync_playwright() as pw:
-            ctx = pw.chromium.launch_persistent_context(
-                user_data_dir=str(PLAYWRIGHT_PROFILE_DIR),
-                headless=False,
-            )
-            ctx.new_page().goto("https://app.gumroad.com/login")
-            click.echo("\nPress Enter when login is complete to close...")
-            input()
-            ctx.close()
-        click.echo("Session saved. Re-run `swindle push <repo>` without --first-login.")
-        return
-
     try:
-        plan = build_plan(staging_dir, repo_name)
+        p = build_plan(staging_dir, repo_name)
     except PlanError as e:
         click.echo(f"Cannot build plan: {e}", err=True)
         sys.exit(1)
 
-    if dry_run:
-        click.echo(f"=== PublishPlan for {repo_name} ===")
-        click.echo(f"  title:           {plan.title}")
-        click.echo(f"  summary:         {plan.summary}")
-        click.echo(f"  price_cents:     {plan.price_cents}")
-        click.echo(f"  tags:            {plan.tags}")
-        click.echo(f"  description:     {len(plan.description_md)} chars")
-        click.echo(f"  features:        {len(plan.features)} bullets")
-        click.echo(f"  button_text:     {plan.button_text!r}")
-        click.echo(f"  receipt:         {len(plan.receipt_message)} chars")
-        click.echo(f"  cover:           {plan.cover_path}")
-        click.echo(f"  thumbnail:       {plan.thumbnail_path}")
-        click.echo(f"  content_file:    {plan.content_file}")
-        if not plan.content_file:
-            click.echo("  [warn] no content_file — real push would fail here", err=True)
-        if not plan.cover_path or not plan.thumbnail_path:
-            click.echo("  [warn] missing image(s) — real push will leave tab empty", err=True)
-        return
-
-    click.echo(f"Publishing draft to Gumroad: {plan.title}")
-    publisher = GumroadPublisher(
-        profile_dir=PLAYWRIGHT_PROFILE_DIR,
-        headless=not headful,
-    )
-    result = publisher.publish_draft(plan)
-
-    if result.succeeded:
-        click.echo(f"\n  draft saved: {result.gumroad_url}")
-        click.echo(f"  product id:  {result.gumroad_product_id}")
-        click.echo(f"  tabs:        {result.tabs_completed}")
-        db = _get_db()
-        try:
-            db.update_gumroad_url(repo_name, result.gumroad_url)
-        finally:
-            db.close()
-    else:
-        click.echo(f"\n  FAILED at: {result.failed_at}", err=True)
-        click.echo(f"  error:     {result.error}", err=True)
-        click.echo(f"  completed: {result.tabs_completed}", err=True)
-        if result.debug_dir:
-            click.echo(f"  debug:     {result.debug_dir}", err=True)
-        sys.exit(1)
+    click.echo(f"=== PublishPlan for {repo_name} ===")
+    click.echo(f"  title:           {p.title}")
+    click.echo(f"  summary:         {p.summary}")
+    click.echo(f"  price_cents:     {p.price_cents}")
+    click.echo(f"  tags:            {p.tags}")
+    click.echo(f"  description:     {len(p.description_md)} chars")
+    click.echo(f"  features:        {len(p.features)} bullets")
+    click.echo(f"  button_text:     {p.button_text!r}")
+    click.echo(f"  receipt:         {len(p.receipt_message)} chars")
+    click.echo(f"  cover:           {p.cover_path}")
+    click.echo(f"  thumbnail:       {p.thumbnail_path}")
+    click.echo(f"  content_file:    {p.content_file}")
+    if not p.content_file:
+        click.echo("  [warn] no content_file — publish will fail", err=True)
 
 
 def _ensure_fields_for_staging(
@@ -412,15 +302,19 @@ def _ensure_fields_for_staging(
 
 @cli.command()
 @click.option("--limit", type=int, default=None, help="Max listings to process")
-@click.option("--dry-run", is_flag=True, help="Show what would be pushed, no browser")
-@click.option("--headful/--headless", default=True)
-def backfill(limit, dry_run, headful):
-    """Push every approved-but-unpublished listing to Gumroad as a draft.
+@click.option("--dry-run", is_flag=True, help="Show what would be published, no API calls")
+@click.option("--sleep-seconds", type=int, default=6,
+              help="Seconds between publishes (rate limit: 10/min)")
+@click.option("--no-publish", is_flag=True,
+              help="Create drafts only, do not enable")
+def backfill(limit, dry_run, sleep_seconds, no_publish):
+    """Publish every approved-but-unpublished listing via the Gumroad API.
 
-    For each listing: regenerate any missing new-field files (features/
-    button/receipt), build the plan, and push via Playwright. On success,
-    records the gumroad_url in the DB.
+    Skips listings whose validator fails (strict) or that lack content.zip.
+    Sleeps between publishes to stay under Gumroad's 10 creates/min limit.
     """
+    import time
+
     db = _get_db()
     try:
         queue = db.get_approved_unpublished()
@@ -435,6 +329,11 @@ def backfill(limit, dry_run, headful):
         queue = queue[:limit]
 
     click.echo(f"Backfill queue: {len(queue)} listing(s)")
+    client: Optional[GumroadAPIClient] = None if dry_run else GumroadAPIClient()
+    succeeded = 0
+    skipped = 0
+    failed = 0
+
     for i, row in enumerate(queue, start=1):
         repo_name = row["repo_name"]
         staging_dir = STAGING_DIR / repo_name
@@ -442,64 +341,64 @@ def backfill(limit, dry_run, headful):
 
         if not staging_dir.is_dir():
             click.echo(f"  skip: staging dir missing ({staging_dir})", err=True)
+            skipped += 1
             continue
 
-        if dry_run:
-            missing = [
-                name for name in ("features.txt", "button_text.txt", "receipt_message.md")
-                if not (staging_dir / name).exists()
-            ]
-            if missing:
-                click.echo(f"  would regenerate: {missing}")
-            else:
-                click.echo("  new fields already present")
-            for img in ("cover.png", "thumbnail.png"):
-                exists = (staging_dir / img).exists() and (staging_dir / img).stat().st_size > 0
-                click.echo(f"  {img}: {'present' if exists else 'MISSING'}")
-            content = staging_dir / "content.zip"
-            click.echo(f"  content.zip: {'present' if content.exists() else 'MISSING (real push fails)'}")
-            continue
-
-        click.echo("  ensuring new-field files...")
-        try:
-            generated = _ensure_fields_for_staging(
-                staging_dir=staging_dir,
-                repo_name=repo_name,
-                repo_url=row["repo_url"],
-                title=row["title"],
-                spec_path=row["spec_path"],
-                project_dir=None,
-            )
-            if generated:
-                click.echo(f"  regenerated: {generated}")
-            else:
-                click.echo("  all new fields already present")
-        except Exception as e:
-            click.echo(f"  field regen FAILED: {e}", err=True)
+        failures = validate_listing(staging_dir)
+        if failures:
+            click.echo(f"  skip: validator failed ({len(failures)} issue(s))", err=True)
+            for msg in failures[:3]:
+                click.echo(f"    - {msg}", err=True)
+            skipped += 1
             continue
 
         try:
             plan = build_plan(staging_dir, repo_name)
         except PlanError as e:
-            click.echo(f"  plan error: {e}", err=True)
+            click.echo(f"  skip: plan error: {e}", err=True)
+            skipped += 1
             continue
 
-        publisher = GumroadPublisher(
-            profile_dir=PLAYWRIGHT_PROFILE_DIR,
-            headless=not headful,
-        )
-        result = publisher.publish_draft(plan)
+        if not plan.content_file:
+            click.echo("  skip: no content.zip", err=True)
+            skipped += 1
+            continue
 
-        if result.succeeded:
-            click.echo(f"  draft saved: {result.gumroad_url}")
-            db = _get_db()
-            try:
-                db.update_gumroad_url(repo_name, result.gumroad_url)
-            finally:
-                db.close()
-        else:
-            click.echo(f"  FAILED at {result.failed_at}: {result.error}", err=True)
-            click.echo(f"  debug: {result.debug_dir}", err=True)
+        if dry_run:
+            click.echo(f"  would publish: {plan.title}")
+            click.echo(f"    content:     {plan.content_file.name} ({plan.content_file.stat().st_size} bytes)")
+            click.echo(f"    tags:        {plan.tags}")
+            continue
+
+        try:
+            product_id, product_url = _publish_via_api(
+                plan=plan,
+                client=client,
+                cover_url=None,
+                skip_publish=no_publish,
+            )
+        except GumroadAPIError as e:
+            click.echo(f"  FAILED: {e}", err=True)
+            if e.status_code:
+                click.echo(f"    status: {e.status_code}", err=True)
+            failed += 1
+            continue
+
+        db = _get_db()
+        try:
+            db.update_status(repo_name, "published")
+            db.update_gumroad_url(repo_name, product_url)
+        finally:
+            db.close()
+        click.echo(f"  published: {product_url}")
+        succeeded += 1
+
+        if i < len(queue):
+            time.sleep(sleep_seconds)
+
+    click.echo(
+        f"\nDone. {succeeded} published, {skipped} skipped, {failed} failed."
+    )
 
 
 @cli.command()
@@ -589,11 +488,173 @@ def approve(repo_name):
         db.close()
 
 
+def _plan_to_product_plan(
+    plan: PublishPlan,
+    file_url: Optional[str],
+) -> ProductPlan:
+    """Translate a staging PublishPlan into the API ProductPlan payload."""
+    files: list[dict] = []
+    if file_url and plan.content_file:
+        files.append({
+            "url": file_url,
+            "display_name": plan.content_file.stem,
+            "extension": plan.content_file.suffix.lstrip(".") or "zip",
+            "position": 0,
+        })
+
+    # Append the feature bullets under an "Includes" section; Gumroad's
+    # dedicated features list is only writable via the web UI today.
+    description = plan.description_md.rstrip()
+    if plan.features:
+        description += "\n\n## Includes\n\n"
+        description += "\n".join(f"- {f}" for f in plan.features)
+
+    return ProductPlan(
+        name=plan.title,
+        description=description,
+        price_cents=plan.price_cents,
+        tags=plan.tags,
+        custom_summary=plan.summary,
+        custom_receipt=plan.receipt_message,
+        files=files,
+    )
+
+
+def _publish_via_api(
+    plan: PublishPlan,
+    client: GumroadAPIClient,
+    cover_url: Optional[str],
+    skip_publish: bool,
+) -> tuple[str, str]:
+    """Run the API publish flow. Returns (product_id, product_url).
+
+    Raises GumroadAPIError on any step failure. The caller is responsible
+    for DB bookkeeping and for optionally calling delete_product on rollback.
+    """
+    file_url = None
+    if plan.content_file:
+        click.echo(f"  uploading {plan.content_file.name} ({plan.content_file.stat().st_size} bytes)...")
+        file_url = client.upload_file(plan.content_file)
+        click.echo(f"    file_url: {file_url}")
+
+    api_plan = _plan_to_product_plan(plan, file_url)
+    click.echo("  creating product...")
+    ref = client.create_product(api_plan)
+    click.echo(f"    product_id: {ref.id}")
+
+    if cover_url:
+        click.echo(f"  attaching cover: {cover_url}")
+        try:
+            client.add_cover_url(ref.id, cover_url)
+        except GumroadAPIError as e:
+            click.echo(f"    cover attach FAILED: {e} (continuing)", err=True)
+
+    if skip_publish:
+        click.echo("  --no-publish: leaving product as draft")
+        return ref.id, ref.url
+
+    click.echo("  publishing...")
+    client.publish(ref.id)
+    return ref.id, ref.url
+
+
 @cli.command()
 @click.argument("repo_name")
+@click.option("--cover-url", default=None,
+              help="Public URL for cover image (thumbnail is API-blocked)")
+@click.option("--no-publish", is_flag=True,
+              help="Create product and upload file but leave as draft")
+@click.option("--skip-validate", is_flag=True,
+              help="Skip validator (only for debugging)")
+def publish(repo_name, cover_url, no_publish, skip_validate):
+    """Auto-publish a staged listing via the Gumroad API.
+
+    Runs the validator (strict), uploads content.zip, creates the product,
+    attaches the cover if a URL is supplied, and enables the product. On
+    success, records the Gumroad URL in the DB and refreshes the LinkedIn
+    draft.
+    """
+    staging_dir = STAGING_DIR / repo_name
+    if not staging_dir.is_dir():
+        click.echo(f"Staging directory not found: {staging_dir}", err=True)
+        sys.exit(1)
+
+    if not skip_validate:
+        click.echo("Running validator...")
+        failures = validate_listing(staging_dir)
+        if failures:
+            click.echo(f"  validator found {len(failures)} issue(s):", err=True)
+            for msg in failures:
+                click.echo(f"    - {msg}", err=True)
+            click.echo(
+                "Aborting publish. Fix issues or pass --skip-validate.", err=True
+            )
+            sys.exit(1)
+        click.echo("  passed")
+
+    try:
+        plan = build_plan(staging_dir, repo_name)
+    except PlanError as e:
+        click.echo(f"Cannot build plan: {e}", err=True)
+        sys.exit(1)
+
+    if not plan.content_file:
+        click.echo(
+            "No content.zip resolved. Add one to the staging dir or run "
+            "`swindle prepare` with --project-dir pointing at a repo that "
+            "has gumroad.yaml or dist/*.zip.",
+            err=True,
+        )
+        sys.exit(1)
+
+    click.echo(f"\nPublishing {repo_name} to Gumroad via API")
+    client = GumroadAPIClient()
+    try:
+        product_id, product_url = _publish_via_api(
+            plan=plan,
+            client=client,
+            cover_url=cover_url,
+            skip_publish=no_publish,
+        )
+    except GumroadAPIError as e:
+        click.echo(f"\n  FAILED: {e}", err=True)
+        if e.status_code:
+            click.echo(f"    status: {e.status_code}", err=True)
+        if e.body:
+            click.echo(f"    body: {e.body}", err=True)
+        sys.exit(1)
+
+    click.echo(f"\n  product_id:  {product_id}")
+    click.echo(f"  product_url: {product_url}")
+
+    db = _get_db()
+    try:
+        listing = db.get_by_name(repo_name)
+        if listing and listing["status"] != "published":
+            db.update_status(repo_name, "published")
+        if product_url:
+            db.update_gumroad_url(repo_name, product_url)
+    finally:
+        db.close()
+
+    # Refresh LinkedIn draft placeholder if present
+    draft_path = STAGING_DIR / repo_name / "linkedin_draft.md"
+    if draft_path.exists() and product_url:
+        draft_content = draft_path.read_text(encoding="utf-8")
+        updated = draft_content.replace("{{GUMROAD_URL}}", product_url)
+        if updated != draft_content:
+            draft_path.write_text(updated, encoding="utf-8")
+            click.echo("  LinkedIn draft updated with Gumroad URL")
+
+
+@cli.command("mark-published")
+@click.argument("repo_name")
 @click.option("--gumroad-url", required=True, help="Gumroad product URL")
-def publish(repo_name, gumroad_url):
-    """Mark an approved listing as published with its Gumroad URL."""
+def mark_published(repo_name, gumroad_url):
+    """Manually mark an approved listing as published (no API call).
+
+    Kept as an escape hatch for products published via the web UI.
+    """
     db = _get_db()
     try:
         listing = db.get_by_name(repo_name)
@@ -609,10 +670,9 @@ def publish(repo_name, gumroad_url):
         db.update_status(repo_name, "published")
         db.update_gumroad_url(repo_name, gumroad_url)
 
-        click.echo(f"Published: {repo_name}")
+        click.echo(f"Marked published: {repo_name}")
         click.echo(f"  Gumroad URL: {gumroad_url}")
 
-        # Update LinkedIn draft to replace placeholder URL if draft exists
         draft_path = STAGING_DIR / repo_name / "linkedin_draft.md"
         if draft_path.exists():
             draft_content = draft_path.read_text(encoding="utf-8")
