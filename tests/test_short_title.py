@@ -157,6 +157,40 @@ class TestValidatorTitleLength:
             assert any(f"{TITLE_MAX_WORDS + 1} words" in f for f in failures)
 
 
+class TestValidatorTagLength:
+    """Gumroad POST /products rejects any tag > 20 chars."""
+
+    def _stage(self, tmp: Path, tags: list[str]) -> Path:
+        sd = tmp / "test-repo"
+        sd.mkdir(parents=True)
+        (sd / "listing.md").write_text("x" * 200, encoding="utf-8")
+        (sd / "metadata.json").write_text(json.dumps({
+            "title": "OK",
+            "summary": "valid summary",
+            "tags": tags,
+            "repo_url": "https://github.com/x/test-repo",
+        }), encoding="utf-8")
+        (sd / "features.txt").write_text("One\nTwo\nThree\n", encoding="utf-8")
+        (sd / "button_text.txt").write_text("Grab it", encoding="utf-8")
+        (sd / "receipt_message.md").write_text("Thanks.", encoding="utf-8")
+        (sd / "cover.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+        (sd / "thumbnail.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+        return sd
+
+    def test_accepts_short_tags(self):
+        with tempfile.TemporaryDirectory() as td:
+            sd = self._stage(Path(td), ["ai", "developer-tools", "cli", "python"])
+            failures = validate_listing(sd)
+            assert not any("tags[" in f for f in failures)
+
+    def test_flags_overlong_tag(self):
+        with tempfile.TemporaryDirectory() as td:
+            # 21 chars
+            sd = self._stage(Path(td), ["ai", "dependency-management", "cli"])
+            failures = validate_listing(sd)
+            assert any("dependency-management" in f and "21 chars" in f for f in failures)
+
+
 class TestRetitleCommand:
     def setup_method(self):
         self.runner = CliRunner()

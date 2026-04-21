@@ -13,6 +13,7 @@ from pathlib import Path
 SUMMARY_MAX_CHARS = 140
 TITLE_MAX_CHARS = 35
 TITLE_MAX_WORDS = 4
+TAG_MAX_CHARS = 20  # Gumroad rejects POST /products with any tag > 20 chars
 BUTTON_MAX_CHARS = 25
 BUTTON_MAX_WORDS = 4
 RECEIPT_MAX_CHARS = 300
@@ -179,6 +180,13 @@ def _check_metadata(sd: Path, failures: list[str]) -> None:
         failures.append(f"metadata.tags needs >=3 tags, got {tags!r}")
     elif {t.lower() for t in tags} == STUB_TAG_SET:
         failures.append("metadata.tags is the stub ['tag1','tag2','tag3']")
+    else:
+        for t in tags:
+            if isinstance(t, str) and len(t) > TAG_MAX_CHARS:
+                failures.append(
+                    f"metadata.tags[{tags.index(t)}] {t!r} is {len(t)} chars, "
+                    f"max {TAG_MAX_CHARS} (Gumroad rejects over-long tags)"
+                )
 
 
 def _check_features(sd: Path, failures: list[str]) -> None:
