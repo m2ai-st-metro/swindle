@@ -497,7 +497,7 @@ def _plan_to_product_plan(
     if file_url and plan.content_file:
         files.append({
             "url": file_url,
-            "display_name": plan.content_file.stem,
+            "display_name": plan.title,
             "extension": plan.content_file.suffix.lstrip(".") or "zip",
             "position": 0,
         })
@@ -541,6 +541,10 @@ def _publish_via_api(
     click.echo("  creating product...")
     ref = client.create_product(api_plan)
     click.echo(f"    product_id: {ref.id}")
+
+    if api_plan.custom_receipt:
+        click.echo("  updating product (custom_receipt)...")
+        client.update_product(ref.id, custom_receipt=api_plan.custom_receipt)
 
     if cover_url:
         click.echo(f"  attaching cover: {cover_url}")
