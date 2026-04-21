@@ -17,7 +17,12 @@ from gumroad_api_client import (
     ProductPlan,
 )
 from publish_plan import PlanError, PublishPlan, build_plan
-from image_generator import generate_cover, generate_thumbnail
+from image_generator import (
+    DEFAULT_STYLE as DEFAULT_IMAGE_STYLE,
+    KNOWN_STYLES as KNOWN_IMAGE_STYLES,
+    generate_cover,
+    generate_thumbnail,
+)
 from linkedin_post_generator import generate_linkedin_post
 from listing_generator import (
     generate_button_text,
@@ -105,8 +110,11 @@ def cli():
 @click.option("--title", help="Product title (skips auto-shortening)")
 @click.option("--no-short-title", is_flag=True,
               help="Skip LLM short-title generation and use titlecased repo slug")
+@click.option("--image-style", type=click.Choice(KNOWN_IMAGE_STYLES),
+              default=DEFAULT_IMAGE_STYLE,
+              help="Visual style for cover/thumbnail generation")
 @click.option("--dry-run", is_flag=True, help="Generate copy only, skip images")
-def prepare(repo_url, spec_path, project_dir, title, no_short_title, dry_run):
+def prepare(repo_url, spec_path, project_dir, title, no_short_title, image_style, dry_run):
     """Prepare a Gumroad listing package for a published repo."""
     repo_name = _repo_name_from_url(repo_url)
     fallback_title = repo_name.replace("-", " ").replace("_", " ").title()
@@ -211,15 +219,17 @@ def prepare(repo_url, spec_path, project_dir, title, no_short_title, dry_run):
     if dry_run:
         click.echo("\n[dry-run] Skipping image generation")
     else:
-        click.echo("\nGenerating cover image (1280x720)...")
-        if generate_cover(title, str(staging_dir)):
+        click.echo(f"\nGenerating cover image (16:9, style={image_style})...")
+        if generate_cover(title, str(staging_dir),
+                          summary=metadata.get("summary", ""),
+                          style=image_style):
             click.echo("  cover.png generated")
         else:
             click.echo("  cover.png FAILED (listing still usable)", err=True)
 
-        click.echo("Generating thumbnail (600x600)...")
         category = metadata.get("tags", ["developer-tools"])[0]
-        if generate_thumbnail(title, category, str(staging_dir)):
+        click.echo(f"Generating thumbnail (1:1, style={image_style})...")
+        if generate_thumbnail(title, category, str(staging_dir), style=image_style):
             click.echo("  thumbnail.png generated")
         else:
             click.echo("  thumbnail.png FAILED (listing still usable)", err=True)
