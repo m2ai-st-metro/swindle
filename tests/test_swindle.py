@@ -729,6 +729,74 @@ def r(page):
             assert diffs == {}
             assert mod.read_text() == original
 
+    def test_parse_capture_matches_set_input_files_sentinel(self):
+        """parser matches set_input_files sentinel to upload selector."""
+        code = f'''
+from playwright.sync_api import Page
+
+def run(page: Page):
+    page.get_by_label("Cover image").set_input_files("{SENTINELS['COVER_UPLOAD_INPUT']}")
+    page.locator("input[type='file'].thumb").set_input_files("{SENTINELS['THUMBNAIL_UPLOAD_INPUT']}")
+    page.get_by_role("button", name="Upload files").set_input_files("{SENTINELS['CONTENT_UPLOAD_INPUT']}")
+'''
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+            f.write(code)
+            path = Path(f.name)
+        try:
+            result = parse_capture(path)
+            by_name = {c.name: c for c in result.captures}
+            assert "COVER_UPLOAD_INPUT" in by_name
+            assert "THUMBNAIL_UPLOAD_INPUT" in by_name
+            assert "CONTENT_UPLOAD_INPUT" in by_name
+            assert by_name["COVER_UPLOAD_INPUT"].matched_via == "set_input_files"
+            assert by_name["COVER_UPLOAD_INPUT"].locator_expr == 'get_by_label("Cover image")'
+            assert by_name["THUMBNAIL_UPLOAD_INPUT"].locator_expr == (
+                "locator(\"input[type='file'].thumb\")"
+            )
+            # Upload selectors should NOT show up in unmatched_sentinels
+            assert "COVER_UPLOAD_INPUT" not in result.unmatched_sentinels
+            assert "CONTENT_UPLOAD_INPUT" not in result.unmatched_sentinels
+        finally:
+            path.unlink()
+
+    def test_ensure_sentinel_files_creates_valid_files(self):
+        """ensure_sentinel_files writes the three payloads with valid bytes."""
+        from capture_selectors import ensure_sentinel_files, SENTINELS
+        # Clean any pre-existing sentinels so we test creation
+        for key in ("COVER_UPLOAD_INPUT", "THUMBNAIL_UPLOAD_INPUT", "CONTENT_UPLOAD_INPUT"):
+            p = Path(SENTINELS[key])
+            if p.exists():
+                p.unlink()
+        created = ensure_sentinel_files()
+        assert set(created.keys()) == {
+            "COVER_UPLOAD_INPUT", "THUMBNAIL_UPLOAD_INPUT", "CONTENT_UPLOAD_INPUT"
+        }
+        cover = Path(SENTINELS["COVER_UPLOAD_INPUT"])
+        thumb = Path(SENTINELS["THUMBNAIL_UPLOAD_INPUT"])
+        content = Path(SENTINELS["CONTENT_UPLOAD_INPUT"])
+        assert cover.exists() and thumb.exists() and content.exists()
+        # PNG signature
+        assert cover.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+        assert thumb.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+        # Empty zip: EOCD signature at start
+        assert content.read_bytes()[:4] == b"PK\x05\x06"
+        # Verify the zip actually opens
+        import zipfile
+        assert zipfile.is_zipfile(content)
+
+    def test_cli_walkthrough_prints_walkthrough(self):
+        """Click CLI 'walkthrough' subcommand prints the walkthrough string."""
+        from capture_selectors import cli, WALKTHROUGH
+        runner = CliRunner()
+        result = runner.invoke(cli, ["walkthrough"])
+        assert result.exit_code == 0, result.output
+        # Spot-check a handful of anchors from the walkthrough text
+        assert "SELECTOR CAPTURE WALKTHROUGH" in result.output
+        assert "SWINDLE_SENTINEL_COVER.png" in result.output
+        assert "SWINDLE_SENTINEL_CONTENT.zip" in result.output
+        # Full string fidelity
+        assert WALKTHROUGH.strip() in result.output
+
 
 class TestRepoNameExtraction:
     """Test repo name extraction from URLs."""

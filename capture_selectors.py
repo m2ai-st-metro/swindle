@@ -7,20 +7,30 @@ those locator chains become the authoritative selectors for the publisher.
 
 Flow
 ----
-1. run_codegen() opens Gumroad in a Chromium window with the Playwright
+1. ensure_sentinel_files() lays down on-disk sentinel payloads (1x1 PNG,
+   empty zip) so the user can point Gumroad's file pickers at real files
+   during the capture walkthrough.
+2. run_codegen() opens Gumroad in a Chromium window with the Playwright
    Inspector. Prints sentinel values the user must paste into each field.
-2. User closes the Inspector when done. Codegen writes captured Python to
+3. User closes the Inspector when done. Codegen writes captured Python to
    the file we passed with -o.
-3. parse_capture() reads that file, finds every .fill("SENTINEL") call, and
-   extracts the Playwright locator expression immediately before it. Same
-   for .set_input_files() and labelled .click() calls.
-4. apply_captures() rewrites gumroad_selectors.py, preserving the module's
+4. parse_capture() reads that file, finds every .fill("SENTINEL") call and
+   every .set_input_files("/tmp/SWINDLE_SENTINEL_*") call, and extracts
+   the Playwright locator expression immediately before each. Labelled
+   .click() calls are matched by visible text.
+5. apply_captures() rewrites gumroad_selectors.py, preserving the module's
    structure but replacing matched selector string literals with the
    captured locator expressions (as string values — publisher evaluates
    them with page.locator(...)).
 
 Sentinels are chosen to be unmistakable in the capture output: long, all-
-caps, product-name-unlike.
+caps, product-name-unlike. Upload-file sentinels use distinct paths under
+/tmp/ so the set_input_files() parser can match them by filename.
+
+CLI
+---
+    python capture_selectors.py run          # ensure files, run codegen, apply
+    python capture_selectors.py walkthrough  # print the walkthrough and exit
 """
 
 from __future__ import annotations
@@ -44,7 +54,69 @@ SENTINELS = {
     "FEATURE_INPUTS": "SWINDLE_SENTINEL_FEATURE_A",
     "BUTTON_TEXT_INPUT": "SWINDLE_SENTINEL_BUTTON_TEXT",
     "RECEIPT_MESSAGE_EDITOR": "SWINDLE_SENTINEL_RECEIPT_BODY",
+    # Upload sentinels: matched by the file path the user selects in the
+    # native file picker. parse_capture() pulls the locator chain sitting
+    # before each set_input_files("...") whose argument contains the sentinel.
+    "COVER_UPLOAD_INPUT": "/tmp/SWINDLE_SENTINEL_COVER.png",
+    "THUMBNAIL_UPLOAD_INPUT": "/tmp/SWINDLE_SENTINEL_THUMBNAIL.png",
+    "CONTENT_UPLOAD_INPUT": "/tmp/SWINDLE_SENTINEL_CONTENT.zip",
 }
+
+# Which sentinels are file-picker uploads (matched via set_input_files, not
+# fill). These must be real files on disk so the native picker accepts them.
+UPLOAD_SENTINELS = {
+    "COVER_UPLOAD_INPUT",
+    "THUMBNAIL_UPLOAD_INPUT",
+    "CONTENT_UPLOAD_INPUT",
+}
+
+# Minimum valid 1x1 PNG (67 bytes) — 8-byte PNG signature + IHDR + IDAT + IEND.
+_MINIMAL_PNG_BYTES = bytes([
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,  # signature
+    0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,  # IHDR length + type
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,  # 1x1
+    0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,  # 8-bit RGBA
+    0x89,
+    0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54,  # IDAT length + type
+    0x78, 0x9C, 0x62, 0x00, 0x01, 0x00, 0x00, 0x05,
+    0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4,
+    0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44,  # IEND length + type
+    0xAE, 0x42, 0x60, 0x82,
+])
+
+# Empty zip archive (22 bytes) — just the End of Central Directory record.
+_EMPTY_ZIP_BYTES = bytes([
+    0x50, 0x4B, 0x05, 0x06,  # EOCD signature
+    0x00, 0x00,              # disk number
+    0x00, 0x00,              # disk with central dir
+    0x00, 0x00,              # entries on this disk
+    0x00, 0x00,              # total entries
+    0x00, 0x00, 0x00, 0x00,  # central dir size
+    0x00, 0x00, 0x00, 0x00,  # central dir offset
+    0x00, 0x00,              # comment length
+])
+
+
+def ensure_sentinel_files() -> dict[str, Path]:
+    """Create the on-disk sentinel files used by upload pickers.
+
+    Writes 1x1 PNG bytes to the cover/thumbnail sentinel paths and empty-zip
+    bytes to the content sentinel path, if they don't already exist. Returns
+    the mapping of selector-name -> Path so the caller can surface the list.
+    """
+    payloads: dict[str, bytes] = {
+        "COVER_UPLOAD_INPUT": _MINIMAL_PNG_BYTES,
+        "THUMBNAIL_UPLOAD_INPUT": _MINIMAL_PNG_BYTES,
+        "CONTENT_UPLOAD_INPUT": _EMPTY_ZIP_BYTES,
+    }
+    created: dict[str, Path] = {}
+    for name, payload in payloads.items():
+        p = Path(SENTINELS[name])
+        if not p.exists():
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(payload)
+        created[name] = p
+    return created
 
 # Click-only fields captured by matching the text the user clicks
 CLICK_TARGETS = {
@@ -79,14 +151,20 @@ Once the editor loads:
         {SENTINELS['DESCRIPTION_EDITOR']!r}
      b. Fill Summary with:           {SENTINELS['SUMMARY_INPUT']!r}
      c. Type in the tags field:      {SENTINELS['TAGS_INPUT']!r}  (press Enter)
+     d. Click the cover-image upload zone. In the native file picker, select:
+        {SENTINELS['COVER_UPLOAD_INPUT']!r}
+     e. Click the thumbnail upload zone. In the native file picker, select:
+        {SENTINELS['THUMBNAIL_UPLOAD_INPUT']!r}
  8. Click "Additional details" if collapsed.
  9. Click "Add feature" and fill one feature with:
         {SENTINELS['FEATURE_INPUTS']!r}
-10. Click the "Checkout" tab. Fill button text with:
+10. Click the "Content" tab. Click the "Upload files" zone and select:
+        {SENTINELS['CONTENT_UPLOAD_INPUT']!r}
+11. Click the "Checkout" tab. Fill button text with:
         {SENTINELS['BUTTON_TEXT_INPUT']!r}
-11. Click the "Receipt" tab. Fill the custom message with:
+12. Click the "Receipt" tab. Fill the custom message with:
         {SENTINELS['RECEIPT_MESSAGE_EDITOR']!r}
-12. Click "Save as draft" (do NOT publish).
+13. Click "Save as draft" (do NOT publish).
 
 When every field above has been filled with the matching sentinel, close the
 Playwright Inspector window. Capture will be parsed automatically.
@@ -178,7 +256,13 @@ def _dot_trim(expr: str) -> str:
 
 
 def parse_capture(path: Path) -> CaptureResult:
-    """Parse a codegen-emitted Python file; extract selectors by sentinel."""
+    """Parse a codegen-emitted Python file; extract selectors by sentinel.
+
+    Matches three kinds of codegen output:
+      * .fill("SENTINEL_VALUE") — text-field selectors
+      * .set_input_files("/tmp/SWINDLE_SENTINEL_*.{png,zip}") — upload inputs
+      * .click() with a visible-text locator matching a CLICK_TARGETS entry
+    """
     raw = path.read_text(encoding="utf-8")
     result = CaptureResult(raw_path=path, raw_code=raw)
 
@@ -190,7 +274,31 @@ def parse_capture(path: Path) -> CaptureResult:
             continue
         fill_by_value.setdefault(value, _dot_trim(m.group(1)))
 
+    # set_input_files captures — the argument can be a single quoted string, a
+    # list, or a variable. We accept any occurrence of the sentinel path as a
+    # substring of the raw argument expression.
+    files_args: list[tuple[str, str]] = []  # (locator_chain, raw_arg_text)
+    for m in FILES_RE.finditer(raw):
+        files_args.append((_dot_trim(m.group(1)), m.group("value")))
+
     for sel_name, sentinel in SENTINELS.items():
+        if sel_name in UPLOAD_SENTINELS:
+            matched = None
+            for loc, arg_text in files_args:
+                # The sentinel path appears verbatim inside the arg expression
+                # (e.g. "/tmp/SWINDLE_SENTINEL_COVER.png").
+                if sentinel in arg_text:
+                    matched = loc
+                    break
+            if matched:
+                result.captures.append(
+                    Capture(name=sel_name, locator_expr=matched,
+                            matched_via="set_input_files")
+                )
+            else:
+                result.unmatched_sentinels.append(sel_name)
+            continue
+
         if sentinel in fill_by_value:
             result.captures.append(
                 Capture(name=sel_name, locator_expr=fill_by_value[sentinel],
@@ -363,3 +471,62 @@ def _find_assignment_span(source: str, name: str) -> Optional[tuple[int, int]]:
             end = offset(end_tok.start[0], end_tok.start[1])
             return (start, end)
     return None
+
+
+# --------------------------------------------------------------------------
+# CLI
+# --------------------------------------------------------------------------
+
+import click  # noqa: E402  (intentional: keep CLI deps out of library import path discussion)
+
+
+@click.group()
+def cli() -> None:
+    """Capture Gumroad selectors via playwright codegen."""
+
+
+@cli.command()
+@click.option(
+    "--selectors-path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=Path(__file__).parent / "gumroad_selectors.py",
+    show_default=True,
+    help="Path to gumroad_selectors.py to rewrite.",
+)
+@click.option(
+    "--start-url",
+    default="https://app.gumroad.com/login",
+    show_default=True,
+    help="Codegen launches here. Log in first if needed.",
+)
+def run(selectors_path: Path, start_url: str) -> None:
+    """Run the full capture loop: ensure files, codegen, parse, apply."""
+    click.echo(WALKTHROUGH)
+    ensure_sentinel_files()
+    click.echo("Launching playwright codegen — close the Inspector when done.\n")
+    capture_path = run_codegen(start_url=start_url)
+    click.echo(f"\nParsing {capture_path}")
+    result = parse_capture(capture_path)
+    diffs = apply_captures(result.captures, selectors_path, backup=True)
+
+    click.echo("\n=== Capture summary ===")
+    click.echo(f"Matched captures:     {len(result.captures)}")
+    click.echo(f"Unmatched sentinels:  {len(result.unmatched_sentinels)}"
+               + (f"  ({', '.join(result.unmatched_sentinels)})"
+                  if result.unmatched_sentinels else ""))
+    click.echo(f"Unmatched clicks:     {len(result.unmatched_clicks)}"
+               + (f"  ({', '.join(result.unmatched_clicks)})"
+                  if result.unmatched_clicks else ""))
+    click.echo(f"\nRewrote {len(diffs)} selector(s) in {selectors_path}:")
+    for name, (old, new) in diffs.items():
+        click.echo(f"  {name}: {old} -> {new!r}")
+
+
+@cli.command()
+def walkthrough() -> None:
+    """Print the capture walkthrough and exit."""
+    click.echo(WALKTHROUGH)
+
+
+if __name__ == "__main__":
+    cli()
