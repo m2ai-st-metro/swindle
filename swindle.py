@@ -23,6 +23,7 @@ from listing_generator import (
     generate_features,
     generate_listing,
     generate_receipt_message,
+    generate_short_title,
 )
 from validator import validate_listing
 
@@ -100,15 +101,33 @@ def cli():
 @click.argument("repo_url")
 @click.option("--spec-path", help="Path to app spec file")
 @click.option("--project-dir", help="Path to local source code")
-@click.option("--title", help="Product title")
+@click.option("--title", help="Product title (skips auto-shortening)")
+@click.option("--no-short-title", is_flag=True,
+              help="Skip LLM short-title generation and use titlecased repo slug")
 @click.option("--dry-run", is_flag=True, help="Generate copy only, skip images")
-def prepare(repo_url, spec_path, project_dir, title, dry_run):
+def prepare(repo_url, spec_path, project_dir, title, no_short_title, dry_run):
     """Prepare a Gumroad listing package for a published repo."""
     repo_name = _repo_name_from_url(repo_url)
+    fallback_title = repo_name.replace("-", " ").replace("_", " ").title()
 
-    if not title:
-        # Derive title from repo name
-        title = repo_name.replace("-", " ").replace("_", " ").title()
+    if title:
+        click.echo(f"Using supplied title: {title}")
+    elif no_short_title:
+        title = fallback_title
+        click.echo(f"Using repo-slug title (--no-short-title): {title}")
+    else:
+        click.echo("Generating short title...")
+        try:
+            title = generate_short_title(
+                repo_name=repo_name,
+                current_title=fallback_title,
+                summary="",
+                spec_path=spec_path,
+            )
+            click.echo(f"  short title: {title!r}")
+        except Exception as e:
+            click.echo(f"  short title FAILED: {e} (falling back to slug)", err=True)
+            title = fallback_title
 
     staging_dir = STAGING_DIR / repo_name
     staging_dir.mkdir(parents=True, exist_ok=True)
@@ -418,6 +437,84 @@ def validate(repo_name):
         sys.exit(1)
 
     click.echo(f"{repo_name}: passed")
+
+
+@cli.command()
+@click.argument("repo_name")
+@click.option("--new-title", default=None,
+              help="Override with a specific title instead of calling the LLM")
+@click.option("--dry-run", is_flag=True,
+              help="Show proposed title without writing")
+def retitle(repo_name, new_title, dry_run):
+    """Regenerate a punchier product name for a staged listing.
+
+    Reads staging/<repo>/metadata.json, calls the short-title LLM with the
+    existing summary + spec, and rewrites metadata.title in place. Does
+    not re-run the main listing or image generators. For already-published
+    products this only updates the local staging copy; Gumroad won't see
+    the new name until you republish.
+    """
+    staging_dir = STAGING_DIR / repo_name
+    meta_path = staging_dir / "metadata.json"
+    if not meta_path.exists():
+        click.echo(f"metadata.json not found: {meta_path}", err=True)
+        sys.exit(1)
+
+    try:
+        metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        click.echo(f"metadata.json invalid JSON: {e}", err=True)
+        sys.exit(1)
+
+    old_title = metadata.get("title") or repo_name
+    summary = metadata.get("summary") or ""
+    spec_path = metadata.get("spec_path")
+
+    if new_title:
+        proposed = new_title.strip()
+        source = "override"
+    else:
+        click.echo(f"Generating short title for {repo_name}...")
+        try:
+            proposed = generate_short_title(
+                repo_name=repo_name,
+                current_title=old_title,
+                summary=summary,
+                spec_path=spec_path,
+            )
+            source = "LLM"
+        except Exception as e:
+            click.echo(f"Generation failed: {e}", err=True)
+            sys.exit(1)
+
+    click.echo(f"  old: {old_title!r}")
+    click.echo(f"  new: {proposed!r}  (source: {source})")
+
+    if proposed == old_title:
+        click.echo("Title is unchanged. Nothing to write.")
+        return
+
+    if dry_run:
+        click.echo("--dry-run: metadata.json not modified.")
+        return
+
+    metadata["title"] = proposed
+    meta_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    click.echo(f"Updated {meta_path}")
+
+    # Keep the DB title in sync for list-staged / status output
+    db = _get_db()
+    try:
+        listing = db.get_by_name(repo_name)
+        if listing:
+            db.conn.execute(
+                "UPDATE listings SET title = ? WHERE repo_name = ?",
+                (proposed, repo_name),
+            )
+            db.conn.commit()
+            click.echo("DB title updated.")
+    finally:
+        db.close()
 
 
 @cli.command("list-staged")

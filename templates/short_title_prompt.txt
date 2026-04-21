@@ -1,0 +1,41 @@
+Generate a short, punchy product name for this developer tool.
+
+Repo slug: {{ repo_name }}
+Current title: {{ current_title }}
+Summary: {{ summary }}
+
+Spec (short):
+{{ spec_text }}
+
+Rules
+
+- 1 to 3 words. Hard cap: 25 characters including spaces.
+- Memorable, not descriptive. Think "AgentTrace" not "AI Agent Tracing Tool".
+- Prefer one invented compound word (CamelCase or lowercase) over a phrase
+  when natural: "convometrics", "ClipForge", "PromptVault".
+- Strip filler: no "for AI", "for agents", "tool", "engine", "framework",
+  "utility", "primitive", "system", "platform", "kit", "suite".
+- Strip qualifier dates and adjectives: drop "2026", "v2", "real-time",
+  "self-hosted", "open-source" from the name (still fine in the summary).
+- Do NOT include the problem domain if it makes the name longer. A name
+  about MCP security proxy is "Argus" or "SealMCP", not "SecureProxyMCP".
+- Keep only the core identity: what is the thing *called*, the way a
+  developer would tell a friend.
+- Capitalize naturally. CamelCase single words are fine. All-lowercase
+  single words are fine. Title Case multi-word is fine. ALL CAPS is not.
+
+Output format
+
+Exactly one line. Just the name. No quotes. No explanation. No trailing
+punctuation. No "Output:" prefix. Just the name.
+
+Rewrite examples
+
+- "Token Efficient Search Api For Ai" -> "TokenSearch"
+- "Mcp Tasks Workflow Engine Primitive For Long Running Agentic Work" -> "McpTasks"
+- "Hallucination Hunter Vscode Extension For Real Time Ai Answer Validation" -> "HalluHunter"
+- "Hipaa Compliant Mcp Security Proxy For Healthcare Ai Agents" -> "HipaaMCP"
+- "Local Ai Coding Agent Optimizer" -> "AgentTune"
+- "Model Capability Plateauing Tool For Ai Agent Benchmarking" -> "PlateauBench"
+- "Self Hosted Mcp Server For Local Ai Agent Orchestration" -> "LocalMCP"
+- "March 2026 Ai Coding Tool Power Rankings Update" -> "Power Rankings"

@@ -212,6 +212,83 @@ def generate_button_text(
     return _parse_button_text(output)
 
 
+SHORT_TITLE_MAX_CHARS = 25
+SHORT_TITLE_MAX_WORDS = 3
+
+
+def generate_short_title(
+    repo_name: str,
+    current_title: str,
+    summary: str = "",
+    spec_path: str | None = None,
+) -> str:
+    """Generate a punchy <=25-char product name.
+
+    Returns a cleaned title. Falls back to a trimmed version of the current
+    title if the LLM output is unusable. Does NOT mutate state.
+    """
+    prompt = _render(
+        "short_title_prompt.txt",
+        repo_name=repo_name,
+        current_title=current_title,
+        summary=summary or "(none)",
+        spec_text=_read_spec(spec_path)[:2000],
+    )
+    output = _call_llm(prompt, max_tokens=30, temperature=0.5)
+    parsed = _parse_short_title(output)
+    if parsed and _title_is_valid(parsed):
+        return parsed
+    return _fallback_short_title(current_title, repo_name)
+
+
+TITLE_PREFIX_RE = re.compile(
+    r"^(?:output|title|name|product\s+name|short\s+title)\s*:\s*",
+    re.IGNORECASE,
+)
+
+
+def _parse_short_title(llm_output: str) -> str:
+    """Extract a single-line name from LLM output."""
+    for raw in llm_output.strip().split("\n"):
+        line = TITLE_PREFIX_RE.sub("", raw.strip()).strip()
+        if not line:
+            continue
+        if line.lower().startswith(("example", "here", "i would", "the name")):
+            continue
+        prev = ""
+        while line != prev:
+            prev = line
+            line = line.strip('"\'').rstrip(".!,;:").strip()
+        return line
+    return ""
+
+
+def _title_is_valid(title: str) -> bool:
+    """Check parsed title against basic sanity rules."""
+    if not title:
+        return False
+    if len(title) > SHORT_TITLE_MAX_CHARS:
+        return False
+    if len(title.split()) > SHORT_TITLE_MAX_WORDS:
+        return False
+    # Reject obvious LLM failures
+    lower = title.lower()
+    for bad in ("here is", "here are", "output", "example", "i'd suggest"):
+        if bad in lower:
+            return False
+    return True
+
+
+def _fallback_short_title(current_title: str, repo_name: str) -> str:
+    """When LLM output is unusable, pick the best of a few safe defaults."""
+    for candidate in (current_title, repo_name.replace("-", " ").replace("_", " ").title()):
+        if _title_is_valid(candidate):
+            return candidate
+    # Last resort: truncate on word boundary
+    truncated = current_title[:SHORT_TITLE_MAX_CHARS].rsplit(" ", 1)[0].strip()
+    return truncated or current_title[:SHORT_TITLE_MAX_CHARS]
+
+
 def generate_receipt_message(
     repo_url: str,
     title: str,

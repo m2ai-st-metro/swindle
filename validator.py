@@ -11,6 +11,8 @@ import re
 from pathlib import Path
 
 SUMMARY_MAX_CHARS = 140
+TITLE_MAX_CHARS = 35
+TITLE_MAX_WORDS = 4
 BUTTON_MAX_CHARS = 25
 BUTTON_MAX_WORDS = 4
 RECEIPT_MAX_CHARS = 300
@@ -161,6 +163,16 @@ def _check_metadata(sd: Path, failures: list[str]) -> None:
         )
     elif summary.strip() == title.strip():
         failures.append("metadata.summary is just the title (LLM fallback — regenerate)")
+
+    if title.strip():
+        if len(title) > TITLE_MAX_CHARS:
+            failures.append(
+                f"metadata.title too long ({len(title)} chars, max {TITLE_MAX_CHARS}) — run `swindle retitle {data.get('repo_url', '<repo>').rstrip('/').rsplit('/', 1)[-1]}`"
+            )
+        if len(title.split()) > TITLE_MAX_WORDS:
+            failures.append(
+                f"metadata.title has {len(title.split())} words, max {TITLE_MAX_WORDS}"
+            )
 
     tags = data.get("tags") or []
     if not isinstance(tags, list) or len(tags) < 3:
