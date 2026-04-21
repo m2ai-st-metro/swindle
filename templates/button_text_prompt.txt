@@ -1,0 +1,30 @@
+Generate the "Add to cart" button text for this Gumroad listing.
+
+Product: {{ title }}
+Repository: {{ repo_url }}
+
+Spec (short):
+{{ spec_text }}
+
+Rules
+
+- 2 to 4 words total. Hard cap: 25 characters including spaces.
+- Verb-led. Start with an action: Grab, Get, Download, Try, Clone, Take.
+- Active voice. "Grab the pack" beats "Can be downloaded".
+- Match the thing. If it's a template -> "Grab the template". If it's a
+  framework -> "Get the code". If it's a tool -> "Try it free".
+- Casual, plain-speak. Not "Acquire this asset". Not "Add to Cart".
+- Free product — it is OK to say "free" if natural but do not force it.
+
+Output format
+
+Exactly one line. Just the button text. No quotes. No explanation. No
+trailing punctuation. No "Output:" prefix. Just the words.
+
+Example outputs (for different products):
+
+    Grab the pack
+    Get the code
+    Try it free
+    Take the template
+    Download it

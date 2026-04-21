@@ -1,4 +1,6 @@
-Generate a Gumroad product listing for a free developer tool.
+Write a Gumroad product description for a free developer tool. The reader is a
+developer scrolling a storefront who has about 10 seconds to decide whether
+this is worth downloading. Win that 10 seconds.
 
 Product: {{ title }}
 Repository: {{ repo_url }}
@@ -9,36 +11,38 @@ Spec:
 Source files:
 {{ file_tree }}
 
-Style guidelines:
-- Lead with a punchy hook -- one sentence that tells a developer why they should care
-- Use benefit-focused copy: what time/effort/pain does this save? Be specific ("cuts branch cleanup from 30 min to 2 min") not vague ("improves your workflow")
-- Technical-professional tone -- persuasive but honest. Developers trust specificity over hype.
-- NEVER use empty superlatives: "revolutionary", "game-changing", "cutting-edge", "unleash", "supercharge", "next-generation"
-- DO use concrete value propositions, comparisons to alternatives, and honest scope ("does X well, doesn't try to do Y")
-- Concise -- respect the reader's time
-- Price: FREE
+Voice and shape
 
-Generate the listing with these exact sections:
+- Plain speak. Write how you'd describe this to a dev friend at a bar, not
+  how you'd describe it in a quarterly report.
+- Lead with the pain or the outcome, not the tool name. First sentence
+  should make the reader think "yeah, I have that problem."
+- Short paragraphs. 2-3 sentences each, max. White space is a feature.
+- No headers unless they genuinely help. Aim for at most ONE short bullet
+  list if you need to enumerate concrete things you get.
+- Specific over generic. "Cuts branch cleanup from 30 min to 2 min" beats
+  "streamlines your workflow". Numbers over adjectives.
+- No superlatives ever: revolutionary, game-changing, cutting-edge, unleash,
+  supercharge, next-generation, best-in-class, seamless. Cut them all.
+- Honest about scope. "Does X well, doesn't try to do Y" builds trust.
+- Free. Don't belabor the price — it's free, just move on.
+- Target length: 180-300 words. Shorter is better than longer.
 
-## Hook
-(One punchy sentence -- the reason someone clicks. Focus on the pain it solves or time it saves.)
+Shape to follow
 
-## What's Inside
-(List the concrete deliverables -- source code, config files, scripts, etc.)
+1. Opening paragraph (2-3 sentences): the pain, or the outcome. Hook.
+2. One paragraph on what it actually does. Concrete. Specific.
+3. Optional: a short bullet list (3-5 items) of what you get IF enumerating
+   things adds value. Skip if the paragraph covered it.
+4. One paragraph on how to use it or what to expect. Setup time, the one
+   thing that will trip you up, the thing you wish someone had told you.
+5. Close with one sentence pointing to the repo or next step.
 
-## The Problem
-(What pain point does this solve? Be specific. Quantify the cost of NOT having this tool if possible.)
+After the description, on separate lines:
 
-## How It Works
-(Brief technical architecture. 3-5 bullet points max.)
+SUMMARY: <one sentence, max 140 chars, the elevator pitch — this is the
+Gumroad summary field, it shows up in search results, make it count>
+TAGS: <3-5 comma-separated tags, lowercase, hyphens-not-spaces>
 
-## Why This One?
-(1-2 sentences on what makes this different from alternatives or rolling your own. Be honest.)
-
-## Get Started
-(Installation/setup steps. Code blocks.)
-
----
-Also output a one-line summary (max 140 chars) and 3-5 tags.
-Format the summary line as: SUMMARY: <text>
-Format the tags line as: TAGS: tag1, tag2, tag3
+Do not include headers like "Description:" or "Output:". Do not explain
+what you're about to do. Just write the description, then SUMMARY, then TAGS.

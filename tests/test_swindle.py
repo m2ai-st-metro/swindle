@@ -15,8 +15,23 @@ from click.testing import CliRunner
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from db import SwindleDB
+from capture_selectors import (
+    SENTINELS,
+    apply_captures,
+    locator_expr_to_selector_string,
+    parse_capture,
+)
+from gumroad_publisher import PlanError, PublishPlan, build_plan
 from image_generator import build_cover_command, build_thumbnail_command
-from listing_generator import _clean_listing, _parse_metadata, _read_spec
+from listing_generator import (
+    _clean_listing,
+    _parse_button_text,
+    _parse_features,
+    _parse_metadata,
+    _parse_receipt_message,
+    _read_spec,
+)
+from validator import validate_listing
 
 
 # --- CLI Tests ---
@@ -311,6 +326,408 @@ class TestMetadataJSON:
         serialized = json.dumps(meta)
         deserialized = json.loads(serialized)
         assert deserialized["title"] == "Title"
+
+
+class TestFieldParsers:
+    """Parsers for the new Gumroad field outputs."""
+
+    def test_features_strips_mixed_bullets(self):
+        raw = "Here are the features:\n- A\n* B\n1. C\n  • D\nE\nOutput: ignore"
+        assert _parse_features(raw) == ["A", "B", "C", "D", "E"]
+
+    def test_features_caps_at_five(self):
+        raw = "\n".join(f"Line {i}" for i in range(10))
+        assert len(_parse_features(raw)) == 5
+
+    def test_button_text_handles_prefix_and_quotes(self):
+        cases = [
+            ('Output: "Grab the pack".', "Grab the pack"),
+            ('\n\n  Get the code\n', "Get the code"),
+            ('Button text: Try it free', "Try it free"),
+            ('"Download it"', "Download it"),
+            ("'Take the template'.", "Take the template"),
+        ]
+        for raw, expected in cases:
+            assert _parse_button_text(raw) == expected, f"failed on {raw!r}"
+
+    def test_receipt_strips_dear_and_output_noise(self):
+        raw = "Dear customer,\nThanks. Run `make setup`.\n"
+        assert _parse_receipt_message(raw) == "Thanks. Run `make setup`."
+
+    def test_receipt_preserves_markdown(self):
+        raw = "Run `npm init`, then read **README.md**."
+        assert _parse_receipt_message(raw) == "Run `npm init`, then read **README.md**."
+
+
+class TestValidator:
+    """Quality gate for staging/<repo>/ directories."""
+
+    @staticmethod
+    def _good_staging(sd: Path) -> None:
+        (sd / "listing.md").write_text(
+            "This tool solves X for developers.\n\n"
+            + "It does Y fast and Z reliably. " * 5,
+            encoding="utf-8",
+        )
+        (sd / "metadata.json").write_text(
+            json.dumps({
+                "title": "Test Tool",
+                "price": 0,
+                "tags": ["cli", "python", "mcp"],
+                "summary": "Tool for devs who want X, saves 2 hours/week.",
+                "repo_url": "https://github.com/x/y",
+                "generated_at": "now",
+            }),
+            encoding="utf-8",
+        )
+        (sd / "features.txt").write_text("Feature A\nFeature B\nFeature C\n", encoding="utf-8")
+        (sd / "button_text.txt").write_text("Grab the pack\n", encoding="utf-8")
+        (sd / "receipt_message.md").write_text("Thanks. Run README setup.\n", encoding="utf-8")
+        (sd / "cover.png").write_bytes(b"x")
+        (sd / "thumbnail.png").write_bytes(b"y")
+
+    def test_passes_clean_listing(self):
+        with tempfile.TemporaryDirectory() as td:
+            sd = Path(td)
+            self._good_staging(sd)
+            assert validate_listing(sd) == []
+
+    def test_flags_missing_files(self):
+        with tempfile.TemporaryDirectory() as td:
+            sd = Path(td)
+            failures = validate_listing(sd)
+            msgs = "\n".join(failures)
+            for name in ("listing.md", "metadata.json", "features.txt",
+                         "button_text.txt", "receipt_message.md",
+                         "cover.png", "thumbnail.png"):
+                assert name in msgs, f"expected {name} in failures"
+
+    def test_flags_stub_tags(self):
+        with tempfile.TemporaryDirectory() as td:
+            sd = Path(td)
+            self._good_staging(sd)
+            (sd / "metadata.json").write_text(
+                json.dumps({"title": "T", "summary": "fine", "tags": ["tag1", "tag2", "tag3"]}),
+                encoding="utf-8",
+            )
+            failures = validate_listing(sd)
+            assert any("stub" in f for f in failures)
+
+    def test_flags_summary_equals_title(self):
+        with tempfile.TemporaryDirectory() as td:
+            sd = Path(td)
+            self._good_staging(sd)
+            (sd / "metadata.json").write_text(
+                json.dumps({"title": "Same", "summary": "Same",
+                            "tags": ["a", "b", "c"]}),
+                encoding="utf-8",
+            )
+            failures = validate_listing(sd)
+            assert any("just the title" in f for f in failures)
+
+    def test_flags_placeholder_text(self):
+        with tempfile.TemporaryDirectory() as td:
+            sd = Path(td)
+            self._good_staging(sd)
+            (sd / "listing.md").write_text(
+                "A" * 200 + "\n\nLorem ipsum dolor sit amet.", encoding="utf-8",
+            )
+            failures = validate_listing(sd)
+            assert any("lorem ipsum" in f for f in failures)
+
+    def test_flags_oversize_button_and_words(self):
+        with tempfile.TemporaryDirectory() as td:
+            sd = Path(td)
+            self._good_staging(sd)
+            (sd / "button_text.txt").write_text(
+                "Grab this very long button text here\n", encoding="utf-8",
+            )
+            failures = validate_listing(sd)
+            assert any("too long" in f for f in failures)
+            assert any("max 4" in f for f in failures)
+
+    def test_flags_feature_bullet_markers_leaked(self):
+        with tempfile.TemporaryDirectory() as td:
+            sd = Path(td)
+            self._good_staging(sd)
+            (sd / "features.txt").write_text(
+                "- marker leaked\nOK line\nOK line\n", encoding="utf-8",
+            )
+            failures = validate_listing(sd)
+            assert any("bullet marker" in f for f in failures)
+
+    def test_flags_receipt_dear_prefix(self):
+        with tempfile.TemporaryDirectory() as td:
+            sd = Path(td)
+            self._good_staging(sd)
+            (sd / "receipt_message.md").write_text(
+                "Dear customer, thanks.\n", encoding="utf-8",
+            )
+            failures = validate_listing(sd)
+            assert any("Dear" in f for f in failures)
+
+
+class TestPublisherPlan:
+    """build_plan() reads staging dirs and produces PublishPlan without a browser."""
+
+    @staticmethod
+    def _populate(sd: Path, *, include_images=True, include_content=False,
+                  bad_tags=False, empty_summary=False, short_features=False):
+        (sd / "listing.md").write_text("A" * 200, encoding="utf-8")
+        meta = {
+            "title": "Test Tool", "price": 0,
+            "tags": ["tag1", "tag2", "tag3"] if bad_tags else ["a", "b", "c"],
+            "summary": "" if empty_summary else "Saves 2 hours a week for devs.",
+            "repo_url": "https://github.com/x/y", "generated_at": "now",
+        }
+        (sd / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
+        (sd / "features.txt").write_text(
+            "A\nB\n" if short_features else "A\nB\nC\nD\nE\n",
+            encoding="utf-8",
+        )
+        (sd / "button_text.txt").write_text("Grab it\n", encoding="utf-8")
+        (sd / "receipt_message.md").write_text("Thanks.\n", encoding="utf-8")
+        if include_images:
+            (sd / "cover.png").write_bytes(b"x")
+            (sd / "thumbnail.png").write_bytes(b"y")
+        if include_content:
+            (sd / "content.zip").write_bytes(b"z")
+
+    def test_build_plan_reads_all_fields(self):
+        with tempfile.TemporaryDirectory() as td:
+            sd = Path(td)
+            self._populate(sd, include_content=True)
+            plan = build_plan(sd, "my-repo")
+            assert plan.repo_name == "my-repo"
+            assert plan.title == "Test Tool"
+            assert plan.summary == "Saves 2 hours a week for devs."
+            assert plan.price_cents == 0
+            assert plan.tags == ["a", "b", "c"]
+            assert plan.description_md == "A" * 200
+            assert plan.features == ["A", "B", "C", "D", "E"]
+            assert plan.button_text == "Grab it"
+            assert plan.receipt_message == "Thanks."
+            assert plan.cover_path == sd / "cover.png"
+            assert plan.thumbnail_path == sd / "thumbnail.png"
+            assert plan.content_file == sd / "content.zip"
+
+    def test_build_plan_caps_features_at_five(self):
+        with tempfile.TemporaryDirectory() as td:
+            sd = Path(td)
+            self._populate(sd)
+            (sd / "features.txt").write_text("\n".join(f"L{i}" for i in range(10)), encoding="utf-8")
+            plan = build_plan(sd, "r")
+            assert len(plan.features) == 5
+
+    def test_build_plan_fails_on_missing_listing(self):
+        with tempfile.TemporaryDirectory() as td:
+            sd = Path(td)
+            with pytest.raises(PlanError, match="listing.md"):
+                build_plan(sd, "r")
+
+    def test_build_plan_fails_on_missing_features(self):
+        with tempfile.TemporaryDirectory() as td:
+            sd = Path(td)
+            self._populate(sd)
+            (sd / "features.txt").unlink()
+            with pytest.raises(PlanError, match="features.txt"):
+                build_plan(sd, "r")
+
+    def test_build_plan_fails_on_empty_summary(self):
+        with tempfile.TemporaryDirectory() as td:
+            sd = Path(td)
+            self._populate(sd, empty_summary=True)
+            with pytest.raises(PlanError, match="summary"):
+                build_plan(sd, "r")
+
+    def test_build_plan_fails_on_under_three_tags(self):
+        with tempfile.TemporaryDirectory() as td:
+            sd = Path(td)
+            self._populate(sd)
+            meta = json.loads((sd / "metadata.json").read_text())
+            meta["tags"] = ["just-one"]
+            (sd / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
+            with pytest.raises(PlanError, match="tags"):
+                build_plan(sd, "r")
+
+    def test_build_plan_fails_on_too_few_features(self):
+        with tempfile.TemporaryDirectory() as td:
+            sd = Path(td)
+            self._populate(sd, short_features=True)
+            with pytest.raises(PlanError, match="features.*3"):
+                build_plan(sd, "r")
+
+    def test_build_plan_content_file_none_when_missing(self):
+        with tempfile.TemporaryDirectory() as td:
+            sd = Path(td)
+            self._populate(sd, include_content=False)
+            plan = build_plan(sd, "r")
+            assert plan.content_file is None
+
+    def test_build_plan_resolves_external_content_file(self):
+        with tempfile.TemporaryDirectory() as td:
+            sd = Path(td)
+            self._populate(sd)
+            external_zip = Path(td) / "external.zip"
+            external_zip.write_bytes(b"z")
+            meta = json.loads((sd / "metadata.json").read_text())
+            meta["content_file"] = str(external_zip)
+            (sd / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
+            plan = build_plan(sd, "r")
+            assert plan.content_file == external_zip
+
+    def test_build_plan_ignores_zero_byte_images(self):
+        with tempfile.TemporaryDirectory() as td:
+            sd = Path(td)
+            self._populate(sd, include_images=False)
+            (sd / "cover.png").write_bytes(b"")
+            (sd / "thumbnail.png").write_bytes(b"")
+            plan = build_plan(sd, "r")
+            assert plan.cover_path is None
+            assert plan.thumbnail_path is None
+
+
+class TestGumroadSelectors:
+    """Structural checks on the gumroad_selectors module."""
+
+    def test_all_required_selectors_exported(self):
+        import gumroad_selectors as gs
+        required = [
+            "NEW_PRODUCT_URL", "LOGIN_URL",
+            "TAB_PRODUCT", "TAB_CONTENT", "TAB_CHECKOUT", "TAB_RECEIPT",
+            "DESCRIPTION_EDITOR", "SUMMARY_INPUT", "TAGS_INPUT",
+            "ADD_FEATURE_BUTTON", "FEATURE_INPUTS",
+            "BUTTON_TEXT_INPUT", "RECEIPT_MESSAGE_EDITOR",
+            "SAVE_DRAFT_BUTTON", "PRODUCT_ID_URL_PATTERN",
+        ]
+        for name in required:
+            assert hasattr(gs, name), f"missing selector: {name}"
+            assert getattr(gs, name), f"empty selector: {name}"
+
+    def test_product_id_pattern_matches_typical_url(self):
+        import re
+
+        import gumroad_selectors as gs
+        m = re.search(gs.PRODUCT_ID_URL_PATTERN,
+                      "https://app.gumroad.com/products/abc123XYZ_-/edit")
+        assert m is not None
+        assert m.group(1) == "abc123XYZ_-"
+
+
+class TestCaptureSelectors:
+    """capture_selectors parses codegen output and rewrites gumroad_selectors.py."""
+
+    def test_locator_expr_to_selector_string_mappings(self):
+        cases = [
+            ('get_by_role("textbox", name="Name")', 'role=textbox[name="Name"]'),
+            ('get_by_role("button")', 'role=button'),
+            ('get_by_label("Price")', 'label=Price'),
+            ('get_by_placeholder("Describe")', 'placeholder=Describe'),
+            ('get_by_test_id("submit")', 'data-testid=submit'),
+            ('get_by_text("Save")', 'text=Save'),
+            ('get_by_text("Save", exact=True)', 'text=Save'),
+            ('locator("#product-name")', '#product-name'),
+        ]
+        for expr, expected in cases:
+            assert locator_expr_to_selector_string(expr) == expected, f"failed on {expr}"
+
+    def test_parse_capture_matches_sentinels_and_clicks(self):
+        code = f'''
+from playwright.sync_api import Page
+
+def run(page: Page):
+    page.get_by_text("Digital product").click()
+    page.get_by_label("Name").fill("{SENTINELS['NEW_PRODUCT_NAME']}")
+    page.get_by_label("Summary").fill("{SENTINELS['SUMMARY_INPUT']}")
+    page.get_by_role("button", name="Save as draft").click()
+'''
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+            f.write(code)
+            path = Path(f.name)
+        try:
+            result = parse_capture(path)
+            names = {c.name for c in result.captures}
+            assert "NEW_PRODUCT_NAME" in names
+            assert "SUMMARY_INPUT" in names
+            assert "PRODUCT_TYPE_DIGITAL" in names
+            assert "SAVE_DRAFT_BUTTON" in names
+            # Unmatched reported too
+            assert "DESCRIPTION_EDITOR" in result.unmatched_sentinels
+        finally:
+            path.unlink()
+
+    def test_apply_captures_rewrites_single_line(self):
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            mod = td / "gumroad_selectors.py"
+            mod.write_text(
+                'from typing import Final\n'
+                'FOO: Final = "old-css"\n'
+                'BAR: Final = "keep-me"\n',
+                encoding="utf-8",
+            )
+            code = f'''
+def r(page):
+    page.get_by_label("Foo").fill("{SENTINELS['NEW_PRODUCT_NAME']}")
+'''
+            # Temp: map NEW_PRODUCT_NAME capture to FOO by renaming in the copy
+            cap_file = td / "cap.py"
+            cap_file.write_text(code, encoding="utf-8")
+            result = parse_capture(cap_file)
+            # Remap to match our test module
+            result.captures[0].name = "FOO"
+            diffs = apply_captures(result.captures, mod, backup=False)
+            assert "FOO" in diffs
+            content = mod.read_text()
+            assert "FOO: Final = 'label=Foo'" in content
+            assert 'BAR: Final = "keep-me"' in content  # untouched
+
+    def test_apply_captures_rewrites_multiline_parenthesised(self):
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            mod = td / "gumroad_selectors.py"
+            mod.write_text(
+                'from typing import Final\n'
+                'SAVE: Final = (\n'
+                '    "button:has-text(\'Save\'), "\n'
+                '    "button:has-text(\'Submit\')"\n'
+                ')\n'
+                'OTHER: Final = "untouched"\n',
+                encoding="utf-8",
+            )
+            code = f'''
+def r(page):
+    page.get_by_role("button", name="Save as draft").click()
+'''
+            cap_file = td / "cap.py"
+            cap_file.write_text(code, encoding="utf-8")
+            result = parse_capture(cap_file)
+            assert any(c.name == "SAVE_DRAFT_BUTTON" for c in result.captures)
+            # Remap for test module key
+            for c in result.captures:
+                if c.name == "SAVE_DRAFT_BUTTON":
+                    c.name = "SAVE"
+            diffs = apply_captures(result.captures, mod, backup=False)
+            content = mod.read_text()
+            # Must be syntactically valid Python
+            import ast
+            ast.parse(content)
+            assert "SAVE: Final = 'role=button[name=\"Save as draft\"]'" in content
+            assert 'OTHER: Final = "untouched"' in content
+
+    def test_apply_captures_skips_raw_fallbacks(self):
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            mod = td / "gumroad_selectors.py"
+            original = 'from typing import Final\nFOO: Final = "keep-me"\n'
+            mod.write_text(original, encoding="utf-8")
+            # A capture whose expression we cannot map
+            from capture_selectors import Capture
+            cap = Capture(name="FOO", locator_expr="something_weird(xyz)",
+                          matched_via="fill-sentinel")
+            diffs = apply_captures([cap], mod, backup=False)
+            assert diffs == {}
+            assert mod.read_text() == original
 
 
 class TestRepoNameExtraction:

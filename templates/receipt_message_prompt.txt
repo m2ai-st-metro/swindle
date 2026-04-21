@@ -1,0 +1,35 @@
+Generate the "Custom message on receipt" for this Gumroad product. This is
+the thank-you note the buyer sees after download. It should be short, warm,
+and point them at the one quick-start thing that matters most.
+
+Product: {{ title }}
+Repository: {{ repo_url }}
+
+Spec:
+{{ spec_text }}
+
+Rules
+
+- 1 to 2 sentences. Hard cap: 300 characters.
+- Open with a thank-you OR with the one setup step that matters most. Not
+  both. Whichever is more useful to the reader in this case.
+- If there is a README or a single command that gets them running, point at
+  it specifically: "Start with `python tool.py init`" beats "Follow the
+  setup instructions".
+- Plain speak. Not "We hope you find this valuable". Not "Kind regards".
+- No apology, no marketing, no "please consider leaving a review".
+- Allow one URL only if it is the repo URL or a direct doc link.
+
+Output format
+
+Just the message text, 1 to 2 sentences. Markdown allowed (backticks, bold).
+No "Dear customer", no signature, no "--". No "Output:" prefix. Just the
+message.
+
+Example shapes (NOT about this product):
+
+    Thanks for grabbing it. Run `make setup` in the unzipped dir, then
+    `make demo` to see it working — takes under a minute.
+
+    Start with `README.md` section "Five-minute tour". The only gotcha is
+    you need Python 3.11+; everything else is in the zip.

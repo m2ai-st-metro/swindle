@@ -140,6 +140,16 @@ class SwindleDB:
         self.conn.commit()
         return cursor.rowcount > 0
 
+    def get_approved_unpublished(self) -> list[dict]:
+        """Get listings with status='approved' that have no gumroad_url yet."""
+        self.connect()
+        rows = self.conn.execute(
+            "SELECT * FROM listings WHERE status = 'approved' "
+            "AND (gumroad_url IS NULL OR gumroad_url = '') "
+            "ORDER BY created_at DESC"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def get_stats(self) -> dict:
         """Get listing counts by status."""
         self.connect()

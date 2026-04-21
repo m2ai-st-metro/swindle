@@ -49,8 +49,18 @@ def _read_spec(spec_path: str | None) -> str:
     return path.read_text(encoding="utf-8")[:8000]
 
 
-def _call_llm(prompt: str) -> str:
-    """Call DeepInfra Nemotron-3 for listing generation."""
+SYSTEM_PROMPT = (
+    "You are a copywriter for developer tools sold on Gumroad. Write in plain "
+    "speak — how a dev would describe the tool to a friend, not how marketing "
+    "would describe it. Lead with concrete pain or outcomes. Use specific "
+    "claims ('saves 2 hours/week', 'Python 3.11+, no external services') not "
+    "empty hype ('revolutionary', 'seamless', 'next-generation'). The reader "
+    "is a developer — earn trust through specificity, not superlatives."
+)
+
+
+def _call_llm(prompt: str, max_tokens: int = 2000, temperature: float = 0.7) -> str:
+    """Call DeepInfra Mistral Small for listing generation."""
     api_key = os.environ.get("DEEPINFRA_API_KEY")
     if not api_key:
         raise RuntimeError("DEEPINFRA_API_KEY not found in ~/.env.shared")
@@ -64,20 +74,11 @@ def _call_llm(prompt: str) -> str:
         json={
             "model": MODEL,
             "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a technical copywriter for developer tools sold on Gumroad. "
-                        "Write persuasive but honest product listings. Lead with concrete benefits "
-                        "and value propositions. Use specific claims ('saves 2 hours/week') not "
-                        "empty hype ('revolutionary'). The reader is a developer -- earn trust "
-                        "through specificity, not superlatives."
-                    ),
-                },
+                {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
-            "max_tokens": 2000,
-            "temperature": 0.7,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
         },
         timeout=60,
     )
@@ -124,6 +125,11 @@ def _clean_listing(llm_output: str) -> str:
     return text
 
 
+def _render(template_name: str, **ctx: object) -> str:
+    env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)))
+    return env.get_template(template_name).render(**ctx)
+
+
 def generate_listing(
     repo_url: str,
     title: str,
@@ -135,13 +141,11 @@ def generate_listing(
     Returns:
         Tuple of (listing_markdown, metadata_dict)
     """
-    env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)))
-    template = env.get_template("listing_prompt.txt")
-
     spec_text = _read_spec(spec_path)
     file_tree = _get_file_tree(project_dir)
 
-    prompt = template.render(
+    prompt = _render(
+        "listing_prompt.txt",
         title=title,
         repo_url=repo_url,
         spec_text=spec_text,
@@ -153,3 +157,103 @@ def generate_listing(
     metadata = _parse_metadata(llm_output, title, repo_url)
 
     return listing_md, metadata
+
+
+def generate_features(
+    repo_url: str,
+    title: str,
+    spec_path: str | None = None,
+    project_dir: str | None = None,
+) -> list[str]:
+    """Generate 3-5 concrete feature bullets for Gumroad's Features field.
+
+    Returns a list of feature strings (no bullet markers, no blank lines).
+    """
+    prompt = _render(
+        "features_prompt.txt",
+        title=title,
+        repo_url=repo_url,
+        spec_text=_read_spec(spec_path),
+        file_tree=_get_file_tree(project_dir),
+    )
+    output = _call_llm(prompt, max_tokens=400, temperature=0.5)
+    return _parse_features(output)
+
+
+def generate_button_text(
+    repo_url: str,
+    title: str,
+    spec_path: str | None = None,
+) -> str:
+    """Generate 2-4 word verb-led button text (<=25 chars)."""
+    prompt = _render(
+        "button_text_prompt.txt",
+        title=title,
+        repo_url=repo_url,
+        spec_text=_read_spec(spec_path)[:2000],
+    )
+    output = _call_llm(prompt, max_tokens=30, temperature=0.5)
+    return _parse_button_text(output)
+
+
+def generate_receipt_message(
+    repo_url: str,
+    title: str,
+    spec_path: str | None = None,
+) -> str:
+    """Generate 1-2 sentence thank-you message for the Gumroad receipt."""
+    prompt = _render(
+        "receipt_message_prompt.txt",
+        title=title,
+        repo_url=repo_url,
+        spec_text=_read_spec(spec_path)[:2000],
+    )
+    output = _call_llm(prompt, max_tokens=200, temperature=0.6)
+    return _parse_receipt_message(output)
+
+
+BULLET_RE = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+")
+
+
+def _parse_features(llm_output: str) -> list[str]:
+    """Parse feature bullets from LLM output. Strips bullet markers and blanks."""
+    lines = []
+    for raw in llm_output.strip().split("\n"):
+        line = BULLET_RE.sub("", raw).strip()
+        if not line:
+            continue
+        if line.lower().startswith(("output:", "features:", "example", "here are")):
+            continue
+        lines.append(line)
+    return lines[:5]
+
+
+PREFIX_RE = re.compile(r"^(?:output|button(?:\s+text)?|example)\s*:\s*", re.IGNORECASE)
+
+
+def _parse_button_text(llm_output: str) -> str:
+    """Parse button text from LLM output. Strips prefix labels, quotes, trailing punct."""
+    for raw in llm_output.strip().split("\n"):
+        line = PREFIX_RE.sub("", raw.strip()).strip()
+        if not line:
+            continue
+        if line.lower().startswith(("example", "here are", "here is")):
+            continue
+        prev = ""
+        while line != prev:
+            prev = line
+            line = line.strip('"\'').rstrip(".!,;:").strip()
+        return line
+    return ""
+
+
+def _parse_receipt_message(llm_output: str) -> str:
+    """Parse receipt message from LLM output. Strips prefix lines and surrounding whitespace."""
+    lines = llm_output.strip().split("\n")
+    filtered = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.lower().startswith(("output:", "message:", "example", "dear ")):
+            continue
+        filtered.append(line)
+    return "\n".join(filtered).strip()

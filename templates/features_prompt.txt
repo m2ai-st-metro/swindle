@@ -1,0 +1,38 @@
+Generate 3 to 5 concrete feature bullets for the Gumroad "Additional details
+-> Features" section of this developer tool listing.
+
+Product: {{ title }}
+Repository: {{ repo_url }}
+
+Spec:
+{{ spec_text }}
+
+Source files:
+{{ file_tree }}
+
+Rules
+
+- Each bullet is one line, one concrete feature or capability. A developer
+  scanning this in 5 seconds should understand what they are getting.
+- Lead with a verb or a concrete noun. "Scans your repo and flags X" beats
+  "Comprehensive scanning functionality for your codebase".
+- Short. 4 to 12 words per bullet. Fits on a single line in the Gumroad UI.
+- No marketing fluff: drop "seamlessly", "robust", "comprehensive",
+  "next-generation", "state of the art", "enterprise-grade".
+- Concrete over abstract. "Python 3.11+ CLI" beats "Modern Python tooling".
+  "80%+ test coverage" beats "Production-ready".
+- Each bullet should describe a distinct thing. Do not restate the same
+  feature three different ways.
+
+Output format
+
+Exactly 3 to 5 lines. Each line is one feature. No bullet markers (no -, *,
+or numbers). No header. No explanation before or after. Just the lines.
+
+Example shape (NOT about this product, just to show format):
+
+    Scans your git history for leaked secrets
+    Python 3.11+ CLI, no external services required
+    Outputs JSON report ready for CI gate checks
+    80%+ test coverage, Pydantic config schema
+    Setup in under 2 minutes with a single command
