@@ -10,8 +10,9 @@ BANANA_MAKER_PYTHON = "/home/apexaipc/.claude/skills/banana-maker/venv/bin/pytho
 
 STYLE_DEVELOPER = "developer"
 STYLE_PHOTOGRAPHIC = "photographic"
+STYLE_STEAMPUNK = "steampunk"
 DEFAULT_STYLE = STYLE_DEVELOPER
-KNOWN_STYLES = (STYLE_DEVELOPER, STYLE_PHOTOGRAPHIC)
+KNOWN_STYLES = (STYLE_DEVELOPER, STYLE_PHOTOGRAPHIC, STYLE_STEAMPUNK)
 
 
 def _developer_cover_prompt(title: str, summary: str) -> str:  # noqa: ARG001
@@ -58,19 +59,69 @@ def _photographic_thumbnail_prompt(title: str, category: str) -> str:
     )
 
 
+def _steampunk_cover_prompt(title: str, summary: str) -> str:  # noqa: ARG001
+    scene = summary.strip() or f"the essence of the product called '{title}'"
+    return (
+        "19th-century engraved book illustration in the style of Edouard Riou's "
+        "Hetzel-edition Jules Verne plates. Detailed ink-and-wash linework with "
+        "cross-hatching and copperplate-engraving texture on aged parchment. "
+        f"Scene: a Jules Verne-era adventure tableau evoking {scene}, reimagined "
+        "through brass instruments, riveted iron hulls, leather-bound tomes, "
+        "nautical charts, observation portholes, zeppelin rigging, pith-helmeted "
+        "explorers with brass spyglasses. Subtle sepia wash, tea-stained paper "
+        "edges. "
+        "CRITICAL: The image must contain ZERO text of any kind. No lettering, "
+        "no words, no titles, no French or English or Latin script, no captions, "
+        "no plaques, no signs, no banners, no signatures, no handwritten "
+        "marginalia, no book spines with readable titles, no map labels, no "
+        "numerals, no gauge labels. Any paper surfaces must be either blank or "
+        "show only illegible abstract squiggles that read as decoration, never "
+        "as real words. Pure visual scene only. "
+        "NOT photorealistic, NOT photography, NOT a photo. No digital screens, "
+        "no modern electronics, no neon, no glowing LEDs, no cartoon style, "
+        "no anime, no 3D render. Leave upper third mostly open with visual "
+        "breathing room for a title overlay."
+    )
+
+
+def _steampunk_thumbnail_prompt(title: str, category: str) -> str:  # noqa: ARG001
+    return (
+        "19th-century engraved illustration, square format, in the style of "
+        "Edouard Riou's Jules Verne plates for the Hetzel editions. Cross-hatched "
+        "copperplate-engraving linework on aged sepia-wash parchment. "
+        f"Single iconic object evoking '{category}': a brass sextant, pocket "
+        "watch, compass rose, zeppelin cross-section, octopus tentacle, lunar "
+        "capsule, deep-sea diving helmet, clockwork key, or leather-bound "
+        "logbook with quill. Detailed ink linework, copperplate texture, "
+        "tea-stained margins. NOT photorealistic, NOT photography. No text, "
+        "no modern UI, no digital elements, no glowing accents, no cartoons, "
+        "no 3D render."
+    )
+
+
 COVER_PROMPTS = {
     STYLE_DEVELOPER: _developer_cover_prompt,
     STYLE_PHOTOGRAPHIC: _photographic_cover_prompt,
+    STYLE_STEAMPUNK: _steampunk_cover_prompt,
 }
 
 THUMBNAIL_PROMPTS = {
     STYLE_DEVELOPER: _developer_thumbnail_prompt,
     STYLE_PHOTOGRAPHIC: _photographic_thumbnail_prompt,
+    STYLE_STEAMPUNK: _steampunk_thumbnail_prompt,
 }
 
 
 def _run_banana_maker(prompt: str, output_path: str, aspect_ratio: str) -> bool:
     python = BANANA_MAKER_PYTHON if Path(BANANA_MAKER_PYTHON).exists() else sys.executable
+    out = Path(output_path)
+    jpg_alt = out.with_suffix(".jpg")
+    # Unlink any pre-existing outputs so we can't silently return a stale file
+    # when banana-maker writes to the .jpg path and the rename is skipped.
+    for stale in (out, jpg_alt):
+        if stale.exists():
+            stale.unlink()
+
     cmd = [
         python,
         BANANA_MAKER,
@@ -86,12 +137,10 @@ def _run_banana_maker(prompt: str, output_path: str, aspect_ratio: str) -> bool:
             print(f"banana-maker error: {result.stderr}", file=sys.stderr)
             return False
         # banana-maker saves as .jpg regardless of requested extension
-        out = Path(output_path)
-        if out.exists():
-            return True
-        jpg_alt = out.with_suffix(".jpg")
         if jpg_alt.exists():
             jpg_alt.rename(out)
+            return True
+        if out.exists():
             return True
         return False
     except subprocess.TimeoutExpired:
